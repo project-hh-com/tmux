@@ -26,17 +26,27 @@ brew install gh && gh auth login
 npm install -g @anthropic-ai/claude-code
 ```
 
-### 1. 스크립트 설치
+### 1. 레포 클론
+
+```bash
+git clone https://github.com/project-hh-com/tmux.git ~/development/tmux
+cd ~/development/tmux
+```
+
+### 2. 스크립트 설치 (심볼릭 링크)
 
 ```bash
 mkdir -p ~/.local/bin
 
-# ship 설치
-cp ship/ship ~/.local/bin/ship
+# ship 설치 — 심볼릭 링크로 소스 파일 하나만 관리
+ln -sf ~/development/tmux/ship/ship ~/.local/bin/ship
 chmod +x ~/.local/bin/ship
 ```
 
-### 2. PATH 설정
+> **심볼릭 링크의 장점**: `~/.local/bin/ship`이 소스 파일을 직접 가리켜요.  
+> 업데이트할 때 `git pull` 한 번으로 끝. 별도 복사 불필요.
+
+### 3. PATH 설정
 
 ```bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
@@ -46,7 +56,7 @@ source ~/.zshrc
 which ship   # → /Users/[이름]/.local/bin/ship
 ```
 
-### 3. Claude Code 설정
+### 4. Claude Code 설정
 
 `~/.claude/settings.json`에 아래 내용 추가:
 
