@@ -227,15 +227,23 @@ else
 fi
 
 # ── 중간 커밋/푸시 헬퍼 ─────────────────────────────────────
-# 변경사항이 있을 때만 커밋. 없으면 조용히 스킵.
+# Architect가 생성한 commit_msg.txt 가 있으면 그 내용 사용.
+# 없으면 FEATURE 원문 사용.
+# 호출: auto_commit "feat" 또는 auto_commit "fix"
 auto_commit() {
-  local MSG="$1"
+  local PREFIX="$1"
+  local CLEAN_MSG
+  if [[ -f "${FLAG_DIR}/commit_msg.txt" ]]; then
+    CLEAN_MSG=$(head -1 "${FLAG_DIR}/commit_msg.txt" | tr -d '\r\n')
+  else
+    CLEAN_MSG="$FEATURE"
+  fi
   git add -A 2>/dev/null || true
   if git diff --cached --quiet 2>/dev/null; then
     echo "  ⏭️  변경사항 없음 — 커밋 스킵"
     return 0
   fi
-  git commit -m "${MSG}
+  git commit -m "${PREFIX}: ${CLEAN_MSG}
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
   git push origin "$BRANCH_NAME" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
@@ -255,11 +263,23 @@ echo ""
 cat > "${FLAG_DIR}/architect_prompt.txt" << PROMPTEOF
 당신은 architect입니다. 요청: "${FEATURE}"
 
-두 가지를 수행하세요.
+세 가지를 수행하세요.
 
 [1] 구현/수정 계획을 ${FLAG_DIR}/plan.md 에 저장하세요. (무엇을 왜 어떻게, 위험요소와 방어책 포함)
 
 [2] 이 요청에 필요한 에이전트를 ${FLAG_DIR}/agents.txt 에 저장하세요.
+
+[3] 이 요청을 git 커밋 메시지용 한 줄 요약으로 ${FLAG_DIR}/commit_msg.txt 에 저장하세요.
+규칙:
+- URL(@https://... 등) 제외
+- 도구 지시사항("mcp사용해줘", "피그마 mcp" 등) 제외
+- 60자 이내
+- feat:/fix: 등 prefix 제외 (ship이 자동으로 붙임)
+- 어떤 파일/페이지를 어떻게 바꿨는지 명확하게
+예시:
+  /login_phone 페이지 피그마 기준 스타일 최신화
+  결제 완료 화면 구현 및 API 연동
+  로그인 시 이름/전화번호 저장 버그 수정
 형식(파이프 구분): 에이전트이름|이 요청에서 맡을 구체적 역할
 예:
 debugger|flarelane 로그인에서 이름/전화번호 저장 실패 원인 분석
@@ -434,7 +454,7 @@ while true; do
     wait_wave "${FLAG_DIR}/agents_wave_a.txt" "Wave A"
     # Wave A 패널은 Wave B가 시작될 때까지 유지 (cleanup 하지 않음)
     echo "  ✅ Wave A 완료"
-    auto_commit "feat: ${FEATURE} — Wave A 구현 완료"
+    auto_commit "feat"
 
     if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
       echo ""
@@ -446,7 +466,7 @@ while true; do
       wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
       cleanup_wave    # A + B 모두 정리
       echo "  🧹 Wave A+B 패널 정리 완료"
-      auto_commit "feat: ${FEATURE} — Wave B 검증 완료"
+      auto_commit "feat"
     else
       cleanup_wave    # Wave B 없으면 A만 정리
       echo "  🧹 Wave A 패널 정리 완료"
@@ -467,7 +487,7 @@ while true; do
     done < "${FLAG_DIR}/agents_wave_a.txt"
     wait_wave "${FLAG_DIR}/agents_wave_a.txt" "Wave A"
     cleanup_wave
-    auto_commit "feat: ${FEATURE} — Wave A 구현 완료"
+    auto_commit "feat"
 
     if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
       echo ""
@@ -486,7 +506,7 @@ while true; do
       done < "${FLAG_DIR}/agents_wave_b.txt"
       wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
       cleanup_wave
-      auto_commit "feat: ${FEATURE} — Wave B 검증 완료"
+      auto_commit "feat"
     fi
   fi
 
@@ -591,7 +611,7 @@ FIXEOF
 
   claude -p "$(cat "${FLAG_DIR}/fix_prompt_${FIX_ROUND}.txt")" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/fix_${FIX_ROUND}.log"
   touch "${FLAG_DIR}/fix_${FIX_ROUND}.done"
-  auto_commit "fix: ${FEATURE} — 자동 수정 Round ${FIX_ROUND}"
+  auto_commit "fix"
 
   echo ""
   echo "🔍 게이트 재검사 (Round ${FIX_ROUND})..."
@@ -655,12 +675,16 @@ REPORT_FILES=""
 GATE_STATUS="통과"
 $GATE_PASS || GATE_STATUS="실패 (Draft PR 생성)"
 
+# commit_msg.txt 가 있으면 PR 제목으로 사용, 없으면 FEATURE 원문
+COMMIT_SUMMARY=$(head -1 "${FLAG_DIR}/commit_msg.txt" 2>/dev/null | tr -d '\r\n' || echo "$FEATURE")
+
 cat > "${FLAG_DIR}/release_manager_prompt.txt" << RMEOF
 당신은 release-manager 에이전트입니다.
 모든 분석/구현/QA 리포트를 통합해 최종 커밋·푸시·PR 생성을 마무리합니다.
 
 ## 작업 내용
 원래 요청: ${FEATURE}
+커밋/PR 제목용 요약: ${COMMIT_SUMMARY}
 작업 브랜치: ${BRANCH_NAME}
 CI 게이트 상태: ${GATE_STATUS}
 
@@ -675,7 +699,7 @@ git log --oneline -5
 
 ### Step 2. 미커밋 변경 처리 (있을 경우)
 git add -A 후 아래 형식으로 커밋:
-  git commit -m "feat: ${FEATURE}
+  git commit -m "feat: ${COMMIT_SUMMARY}
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
@@ -693,7 +717,7 @@ git push origin ${BRANCH_NAME}
   - **prd/master 를 베이스로 절대 지정하지 마세요 — 해당 상황 발생 시 즉시 중단하고 결과 파일에 사유 기록**
   - 반드시 --label "Claude Agent" 포함
   - CI 게이트 실패 상태면 --draft 플래그 추가
-  - PR 제목: feat: ${FEATURE}
+  - PR 제목: feat: ${COMMIT_SUMMARY}
   - PR 본문 구성:
     ## Summary
     (plan.md 요약 — Read 툴로 읽어서 2-3줄로 요약)
