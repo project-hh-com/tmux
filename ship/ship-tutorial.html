@@ -703,9 +703,9 @@ EOF</div>
         <div class="code-body"><span class="cm"># 1. 레포 클론 (처음 한 번)</span>
 <span class="cv">git</span> clone https://github.com/project-hh-com/tmux.git ~/development/tmux
 
-<span class="cm"># 2. ship 스크립트 복사</span>
+<span class="cm"># 2. 심볼릭 링크 생성 — 소스 파일 하나만 관리</span>
 <span class="cv">mkdir</span> -p ~/.local/bin
-<span class="cv">cp</span> ~/development/tmux/ship/ship ~/.local/bin/ship
+<span class="cv">ln</span> -sf ~/development/tmux/ship/ship ~/.local/bin/ship
 
 <span class="cm"># 3. 실행 권한</span>
 <span class="cv">chmod</span> +x ~/.local/bin/ship
@@ -719,8 +719,16 @@ which ship  <span class="cm"># → /Users/[이름]/.local/bin/ship</span></div>
       <div class="notice tip">
         <div class="notice-icon">💡</div>
         <div class="notice-text">
+          <div class="notice-title">심볼릭 링크의 장점</div>
+          <code>~/.local/bin/ship</code>은 <code>~/development/tmux/ship/ship</code>을 직접 가리켜요. 소스 파일 하나만 관리하면 되고, <code>git pull</code>만 해도 바로 최신 버전으로 실행됩니다. 별도 복사 불필요.
+        </div>
+      </div>
+
+      <div class="notice info">
+        <div class="notice-icon">🔄</div>
+        <div class="notice-text">
           <div class="notice-title">업데이트 방법</div>
-          레포에서 새 버전을 pull하면 됩니다: <code>cd ~/development/tmux &amp;&amp; git pull &amp;&amp; cp ship/ship ~/.local/bin/ship</code>
+          <code>cd ~/development/tmux &amp;&amp; git pull</code> — 끝. 심볼릭 링크가 최신 소스를 자동으로 참조합니다.
         </div>
       </div>
 
@@ -934,7 +942,7 @@ EOF</div>
         <div class="install-step">agents/*.md 6개 생성 (backend·frontend·debugger·reviewer·test·security)</div>
         <div class="install-step">commands/ship.md 생성</div>
         <div class="install-step highlight">git clone https://github.com/project-hh-com/tmux.git ~/development/tmux</div>
-        <div class="install-step highlight">mkdir -p ~/.local/bin &amp;&amp; cp ~/development/tmux/ship/ship ~/.local/bin/ship</div>
+        <div class="install-step highlight">mkdir -p ~/.local/bin &amp;&amp; ln -sf ~/development/tmux/ship/ship ~/.local/bin/ship</div>
         <div class="install-step">chmod +x ~/.local/bin/ship</div>
         <div class="install-step">PATH에 ~/.local/bin 추가 (.zshrc)</div>
         <div class="install-step">~/.tmux.conf 설정</div>
@@ -1005,7 +1013,7 @@ cat .agent/ship-[타임스탬프]/judge_review_1.md</div>
 
       <h3>ship 스크립트 업데이트</h3>
       <div class="code-block">
-        <div class="code-body">cd ~/development/tmux && git pull && cp ship/ship ~/.local/bin/ship</div>
+        <div class="code-body">cd ~/development/tmux && git pull</div>
       </div>
     </div>
 
