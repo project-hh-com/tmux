@@ -1,0 +1,16 @@
+title: tmux commands
+description: Claude Agent 기반 개발 자동화 커맨드 모음
+baseurl: "/tmux"
+url: "https://hwangdahee.github.io"
+lang: ko
+
+# GitHub Pages 빌드 설정
+markdown: kramdown
+highlighter: rouge
+
+# 무시할 파일
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - "*.sh"
+  - README.md

@@ -1,64 +1,10 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tmux commands</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+---
+layout: default
+title: 커맨드 목록
+---
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: 'Noto Sans KR', sans-serif;
-    background: #f4f5f7;
-    color: #111827;
-    min-height: 100vh;
-  }
-
-  /* ── 헤더 ── */
-  .header {
-    background: #fff;
-    border-bottom: 1px solid #e5e7eb;
-    padding: 0 48px;
-    height: 64px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    position: sticky;
-    top: 0;
-    z-index: 10;
-  }
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .header-logo {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 18px;
-    font-weight: 500;
-    color: #111827;
-    letter-spacing: -0.3px;
-  }
-  .header-logo span { color: #6366f1; }
-  .header-badge {
-    font-size: 11px;
-    font-weight: 600;
-    background: #eef2ff;
-    color: #4f46e5;
-    padding: 3px 9px;
-    border-radius: 20px;
-  }
-  .header-right {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: #9ca3af;
-  }
-
-  /* ── 히어로 ── */
   .hero {
-    padding: 64px 48px 48px;
+    padding: 56px 48px 40px;
     max-width: 1100px;
     margin: 0 auto;
   }
@@ -68,24 +14,22 @@
     text-transform: uppercase;
     letter-spacing: 1px;
     color: #6366f1;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
   .hero h1 {
-    font-size: 36px;
+    font-size: 34px;
     font-weight: 700;
     letter-spacing: -0.8px;
     color: #111827;
     line-height: 1.2;
   }
   .hero p {
-    margin-top: 14px;
-    font-size: 16px;
+    margin-top: 12px;
+    font-size: 15px;
     color: #6b7280;
-    max-width: 520px;
+    max-width: 500px;
     line-height: 1.7;
   }
-
-  /* ── 그리드 ── */
   .grid {
     max-width: 1100px;
     margin: 0 auto;
@@ -94,8 +38,6 @@
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 20px;
   }
-
-  /* ── 명령어 카드 ── */
   .cmd-card {
     background: #fff;
     border: 1px solid #e5e7eb;
@@ -103,16 +45,14 @@
     padding: 28px;
     display: flex;
     flex-direction: column;
-    gap: 0;
     transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
-    cursor: default;
   }
-  .cmd-card:hover {
+  .cmd-card:hover:not(.coming-soon) {
     box-shadow: 0 8px 24px rgba(0,0,0,0.08);
     border-color: #c7d2fe;
     transform: translateY(-2px);
   }
-
+  .cmd-card.coming-soon { opacity: 0.5; pointer-events: none; }
   .card-top {
     display: flex;
     align-items: flex-start;
@@ -120,209 +60,94 @@
     margin-bottom: 16px;
   }
   .card-icon {
-    width: 48px;
-    height: 48px;
+    width: 48px; height: 48px;
     border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    background: #eef2ff;
+    display: flex; align-items: center; justify-content: center;
     font-size: 24px;
   }
   .card-status {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 20px;
+    font-size: 11px; font-weight: 600;
+    padding: 4px 10px; border-radius: 20px;
   }
   .status-stable { background: #f0fdf4; color: #16a34a; }
   .status-beta   { background: #fffbeb; color: #d97706; }
   .status-soon   { background: #f3f4f6; color: #9ca3af; }
-
   .card-name {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 22px;
-    font-weight: 500;
-    color: #111827;
-    margin-bottom: 6px;
+    font-size: 22px; font-weight: 500;
+    color: #111827; margin-bottom: 6px;
   }
   .card-desc {
-    font-size: 14px;
-    color: #6b7280;
-    line-height: 1.6;
-    margin-bottom: 20px;
-    flex: 1;
+    font-size: 14px; color: #6b7280;
+    line-height: 1.6; margin-bottom: 16px; flex: 1;
   }
-
-  /* 태그 */
   .card-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 20px;
+    display: flex; flex-wrap: wrap;
+    gap: 6px; margin-bottom: 20px;
   }
   .tag {
-    font-size: 11px;
-    font-weight: 500;
-    padding: 3px 9px;
-    border-radius: 6px;
-    background: #f3f4f6;
-    color: #374151;
+    font-size: 11px; font-weight: 500;
+    padding: 3px 9px; border-radius: 6px;
+    background: #f3f4f6; color: #374151;
   }
-
-  /* 링크 버튼 */
   .card-links {
-    display: flex;
-    gap: 8px;
+    display: flex; gap: 8px;
     border-top: 1px solid #f3f4f6;
-    padding-top: 20px;
-    margin-top: auto;
+    padding-top: 20px; margin-top: auto;
   }
   .link-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 8px 14px;
-    border-radius: 8px;
-    text-decoration: none;
-    transition: background 0.12s;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 600;
+    padding: 8px 14px; border-radius: 8px;
+    text-decoration: none; transition: background 0.12s;
   }
-  .link-btn.primary {
-    background: #eef2ff;
-    color: #4f46e5;
-  }
+  .link-btn.primary { background: #eef2ff; color: #4f46e5; }
   .link-btn.primary:hover { background: #e0e7ff; }
-  .link-btn.secondary {
-    background: #f9fafb;
-    color: #374151;
-    border: 1px solid #e5e7eb;
-  }
+  .link-btn.secondary { background: #f9fafb; color: #374151; border: 1px solid #e5e7eb; }
   .link-btn.secondary:hover { background: #f3f4f6; }
-  .link-btn.disabled {
-    background: #f9fafb;
-    color: #d1d5db;
-    border: 1px solid #e5e7eb;
-    cursor: not-allowed;
-    pointer-events: none;
-  }
-
-  /* ── Coming soon 카드 ── */
-  .cmd-card.coming-soon {
-    opacity: 0.55;
-    pointer-events: none;
-  }
-  .cmd-card.coming-soon:hover {
-    box-shadow: none;
-    border-color: #e5e7eb;
-    transform: none;
-  }
-
-  /* ── 푸터 ── */
-  .footer {
-    text-align: center;
-    padding: 32px;
-    font-size: 13px;
-    color: #9ca3af;
-    border-top: 1px solid #e5e7eb;
-    background: #fff;
-  }
-  .footer a {
-    color: #6366f1;
-    text-decoration: none;
-  }
-  .footer a:hover { text-decoration: underline; }
+  .link-btn.disabled { background: #f9fafb; color: #d1d5db; border: 1px solid #e5e7eb; }
 
   @media (max-width: 640px) {
-    .header { padding: 0 20px; }
-    .hero   { padding: 40px 20px 32px; }
-    .grid   { padding: 0 20px 60px; }
-    .hero h1 { font-size: 26px; }
+    .hero { padding: 36px 20px 28px; }
+    .grid { padding: 0 20px 60px; }
   }
 </style>
-</head>
-<body>
 
-<!-- ── 헤더 ── -->
-<header class="header">
-  <div class="header-left">
-    <div class="header-logo">~/<span>tmux</span></div>
-    <span class="header-badge">Claude Agent</span>
-  </div>
-  <div class="header-right">danble.co.kr</div>
-</header>
-
-<!-- ── 히어로 ── -->
 <section class="hero">
   <div class="hero-eyebrow">Claude Agent Teams</div>
   <h1>개발 자동화 커맨드 모음</h1>
   <p>Claude Agent 기반의 개발 워크플로 커맨드. 기획부터 PR까지 반복 작업을 자동화합니다.</p>
 </section>
 
-<!-- ── 카드 그리드 ── -->
 <main class="grid">
-
-  <!-- ship -->
-  <div class="cmd-card">
-    <div class="card-top">
-      <div class="card-icon" style="background:#eef2ff;">🚢</div>
-      <span class="card-status status-stable">Stable</span>
+  {% for cmd in site.data.commands %}
+    <div class="cmd-card{% if cmd.status == 'soon' %} coming-soon{% endif %}">
+      <div class="card-top">
+        <div class="card-icon">{{ cmd.icon }}</div>
+        <span class="card-status status-{{ cmd.status }}">{{ cmd.status_label }}</span>
+      </div>
+      <div class="card-name">{{ cmd.name }}</div>
+      <div class="card-desc">{{ cmd.desc }}</div>
+      {% if cmd.tags %}
+        <div class="card-tags">
+          {% for tag in cmd.tags %}
+            <span class="tag">{{ tag }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="card-links">
+        {% if cmd.links.tutorial %}
+          <a href="{{ site.baseurl }}/{{ cmd.links.tutorial }}" class="link-btn primary">📖 튜토리얼</a>
+        {% else %}
+          <span class="link-btn disabled">📖 튜토리얼</span>
+        {% endif %}
+        {% if cmd.links.overview %}
+          <a href="{{ site.baseurl }}/{{ cmd.links.overview }}" class="link-btn secondary">🗺 개요</a>
+        {% else %}
+          <span class="link-btn disabled">🗺 개요</span>
+        {% endif %}
+      </div>
     </div>
-    <div class="card-name">ship</div>
-    <div class="card-desc">기획부터 PR까지 원커맨드 자동화. Architect가 에이전트를 선택하고, 2-Wave 병렬 실행, CI 게이트, 자동 PR 생성까지.</div>
-    <div class="card-tags">
-      <span class="tag">Agent Teams</span>
-      <span class="tag">tmux Wave</span>
-      <span class="tag">Red/Blue/Judge</span>
-      <span class="tag">Auto PR</span>
-    </div>
-    <div class="card-links">
-      <a href="ship/ship-tutorial.html" class="link-btn primary">📖 튜토리얼</a>
-      <a href="ship/ship-overview.html" class="link-btn secondary">🗺 개요</a>
-    </div>
-  </div>
-
-  <!-- 예시: 다음 커맨드 자리 -->
-  <div class="cmd-card coming-soon">
-    <div class="card-top">
-      <div class="card-icon" style="background:#f3f4f6;">⚡</div>
-      <span class="card-status status-soon">Coming soon</span>
-    </div>
-    <div class="card-name">fix</div>
-    <div class="card-desc">버그 수정에 특화된 커맨드. Debugger 에이전트 중심으로 원인 분석부터 회귀 테스트까지.</div>
-    <div class="card-tags">
-      <span class="tag">Debugger</span>
-      <span class="tag">Root Cause</span>
-    </div>
-    <div class="card-links">
-      <span class="link-btn disabled">📖 튜토리얼</span>
-      <span class="link-btn disabled">🗺 개요</span>
-    </div>
-  </div>
-
-  <div class="cmd-card coming-soon">
-    <div class="card-top">
-      <div class="card-icon" style="background:#f3f4f6;">👀</div>
-      <span class="card-status status-soon">Coming soon</span>
-    </div>
-    <div class="card-name">review</div>
-    <div class="card-desc">PR 코드 리뷰 자동화. Reviewer + Security 에이전트가 레이어 규칙, 타입 안전성, 보안 취약점을 검토.</div>
-    <div class="card-tags">
-      <span class="tag">Reviewer</span>
-      <span class="tag">Security</span>
-    </div>
-    <div class="card-links">
-      <span class="link-btn disabled">📖 튜토리얼</span>
-      <span class="link-btn disabled">🗺 개요</span>
-    </div>
-  </div>
-
+  {% endfor %}
 </main>
-
-<!-- ── 푸터 ── -->
-<footer class="footer">
-  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
-</footer>
-
-</body>
-</html>
