@@ -1,0 +1,32 @@
+[
+  {
+    "name": "ship",
+    "icon": "🚢",
+    "status": "stable",
+    "statusLabel": "Stable",
+    "desc": "기획부터 PR까지 원커맨드 자동화. Architect가 에이전트를 선택하고, 2-Wave 병렬 실행, CI 게이트, 자동 PR 생성까지.",
+    "tags": ["Agent Teams", "tmux Wave", "Red/Blue/Judge", "Auto PR"],
+    "tutorial": "ship/ship-tutorial.html",
+    "overview": "ship/ship-overview.html"
+  },
+  {
+    "name": "fix",
+    "icon": "⚡",
+    "status": "soon",
+    "statusLabel": "Coming soon",
+    "desc": "버그 수정에 특화된 커맨드. Debugger 에이전트 중심으로 원인 분석부터 회귀 테스트까지.",
+    "tags": ["Debugger", "Root Cause"],
+    "tutorial": null,
+    "overview": null
+  },
+  {
+    "name": "review",
+    "icon": "👀",
+    "status": "soon",
+    "statusLabel": "Coming soon",
+    "desc": "PR 코드 리뷰 자동화. Reviewer + Security 에이전트가 레이어 규칙, 타입 안전성, 보안 취약점을 검토.",
+    "tags": ["Reviewer", "Security"],
+    "tutorial": null,
+    "overview": null
+  }
+]

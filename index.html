@@ -35,9 +35,11 @@
   .cmd-card.coming-soon { opacity: 0.5; pointer-events: none; }
   .card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
   .card-icon { width: 48px; height: 48px; border-radius: 12px; background: #eef2ff; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+  .card-icon.soon { background: #f3f4f6; }
   .card-status { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px; }
   .status-stable { background: #f0fdf4; color: #16a34a; }
-  .status-soon { background: #f3f4f6; color: #9ca3af; }
+  .status-beta   { background: #fffbeb; color: #d97706; }
+  .status-soon   { background: #f3f4f6; color: #9ca3af; }
   .card-name { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 500; color: #111827; margin-bottom: 6px; }
   .card-desc { font-size: 14px; color: #6b7280; line-height: 1.6; margin-bottom: 16px; flex: 1; }
   .card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
@@ -48,10 +50,11 @@
   .link-btn.primary:hover { background: #e0e7ff; }
   .link-btn.secondary { background: #f9fafb; color: #374151; border: 1px solid #e5e7eb; }
   .link-btn.secondary:hover { background: #f3f4f6; }
-  .link-btn.disabled { background: #f9fafb; color: #d1d5db; border: 1px solid #e5e7eb; cursor: not-allowed; }
+  .link-btn.disabled { background: #f9fafb; color: #d1d5db; border: 1px solid #e5e7eb; cursor: not-allowed; pointer-events: none; }
 
   footer { text-align: center; padding: 28px; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; background: #fff; }
   footer a { color: #6366f1; text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
 
   @media (max-width: 640px) {
     .nav { padding: 0 20px; } .nav-links { display: none; }
@@ -65,9 +68,7 @@
 <nav class="nav">
   <div style="display:flex;align-items:center;gap:24px;">
     <a href="." class="nav-logo">~/<span>tmux</span></a>
-    <div class="nav-links">
-      <a href="ship/ship-tutorial.html" class="nav-link">ship</a>
-    </div>
+    <div class="nav-links" id="nav-links"></div>
   </div>
   <span class="nav-badge">Claude Agent</span>
 </nav>
@@ -78,69 +79,55 @@
   <p>Claude Agent 기반의 개발 워크플로 커맨드. 기획부터 PR까지 반복 작업을 자동화합니다.</p>
 </section>
 
-<main class="grid">
-
-  <!-- ship -->
-  <div class="cmd-card">
-    <div class="card-top">
-      <div class="card-icon">🚢</div>
-      <span class="card-status status-stable">Stable</span>
-    </div>
-    <div class="card-name">ship</div>
-    <div class="card-desc">기획부터 PR까지 원커맨드 자동화. Architect가 에이전트를 선택하고, 2-Wave 병렬 실행, CI 게이트, 자동 PR 생성까지.</div>
-    <div class="card-tags">
-      <span class="tag">Agent Teams</span>
-      <span class="tag">tmux Wave</span>
-      <span class="tag">Red/Blue/Judge</span>
-      <span class="tag">Auto PR</span>
-    </div>
-    <div class="card-links">
-      <a href="ship/ship-tutorial.html" class="link-btn primary">📖 튜토리얼</a>
-      <a href="ship/ship-overview.html" class="link-btn secondary">🗺 개요</a>
-    </div>
-  </div>
-
-  <!-- fix (coming soon) -->
-  <div class="cmd-card coming-soon">
-    <div class="card-top">
-      <div class="card-icon" style="background:#f3f4f6;">⚡</div>
-      <span class="card-status status-soon">Coming soon</span>
-    </div>
-    <div class="card-name">fix</div>
-    <div class="card-desc">버그 수정에 특화된 커맨드. Debugger 에이전트 중심으로 원인 분석부터 회귀 테스트까지.</div>
-    <div class="card-tags">
-      <span class="tag">Debugger</span>
-      <span class="tag">Root Cause</span>
-    </div>
-    <div class="card-links">
-      <span class="link-btn disabled">📖 튜토리얼</span>
-      <span class="link-btn disabled">🗺 개요</span>
-    </div>
-  </div>
-
-  <!-- review (coming soon) -->
-  <div class="cmd-card coming-soon">
-    <div class="card-top">
-      <div class="card-icon" style="background:#f3f4f6;">👀</div>
-      <span class="card-status status-soon">Coming soon</span>
-    </div>
-    <div class="card-name">review</div>
-    <div class="card-desc">PR 코드 리뷰 자동화. Reviewer + Security 에이전트가 레이어 규칙, 타입 안전성, 보안 취약점을 검토.</div>
-    <div class="card-tags">
-      <span class="tag">Reviewer</span>
-      <span class="tag">Security</span>
-    </div>
-    <div class="card-links">
-      <span class="link-btn disabled">📖 튜토리얼</span>
-      <span class="link-btn disabled">🗺 개요</span>
-    </div>
-  </div>
-
-</main>
+<main class="grid" id="grid"></main>
 
 <footer>
   Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
 </footer>
+
+<script>
+  fetch('commands.json')
+    .then(r => r.json())
+    .then(commands => {
+      // 네비게이션 — stable 커맨드만
+      const navLinks = document.getElementById('nav-links');
+      commands
+        .filter(c => c.status === 'stable')
+        .forEach(c => {
+          const a = document.createElement('a');
+          a.href = c.tutorial;
+          a.className = 'nav-link';
+          a.textContent = c.name;
+          navLinks.appendChild(a);
+        });
+
+      // 카드 그리드
+      const grid = document.getElementById('grid');
+      commands.forEach(c => {
+        const isSoon = c.status === 'soon';
+        grid.innerHTML += `
+          <div class="cmd-card${isSoon ? ' coming-soon' : ''}">
+            <div class="card-top">
+              <div class="card-icon${isSoon ? ' soon' : ''}">${c.icon}</div>
+              <span class="card-status status-${c.status}">${c.statusLabel}</span>
+            </div>
+            <div class="card-name">${c.name}</div>
+            <div class="card-desc">${c.desc}</div>
+            <div class="card-tags">
+              ${c.tags.map(t => `<span class="tag">${t}</span>`).join('')}
+            </div>
+            <div class="card-links">
+              ${c.tutorial
+                ? `<a href="${c.tutorial}" class="link-btn primary">📖 튜토리얼</a>`
+                : `<span class="link-btn disabled">📖 튜토리얼</span>`}
+              ${c.overview
+                ? `<a href="${c.overview}" class="link-btn secondary">🗺 개요</a>`
+                : `<span class="link-btn disabled">🗺 개요</span>`}
+            </div>
+          </div>`;
+      });
+    });
+</script>
 
 </body>
 </html>
