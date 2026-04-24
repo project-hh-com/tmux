@@ -16,12 +16,14 @@
     display: flex; align-items: center; justify-content: space-between;
     position: sticky; top: 0; z-index: 100;
   }
-  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: #111827; text-decoration: none; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: #111827; text-decoration: none; padding: 6px 0; }
   .nav-logo span { color: #6366f1; }
+  .nav-divider { width: 1px; height: 20px; background: #e5e7eb; margin: 0 8px; }
   .nav-links { display: flex; gap: 4px; }
   .nav-link { font-size: 13px; font-weight: 500; color: #6b7280; text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background 0.12s, color 0.12s; }
   .nav-link:hover { background: #f3f4f6; color: #111827; }
-  .nav-badge { font-size: 11px; font-weight: 600; background: #eef2ff; color: #4f46e5; padding: 3px 9px; border-radius: 20px; }
+  .nav-link.active { background: #eef2ff; color: #4f46e5; }
+  .nav-badge { font-size: 11px; font-weight: 600; background: #eef2ff; color: #4f46e5; padding: 3px 10px; border-radius: 20px; }
 
   .hero { padding: 56px 48px 40px; max-width: 1100px; margin: 0 auto; }
   .hero-eyebrow { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #6366f1; margin-bottom: 12px; }
@@ -56,8 +58,9 @@
   footer a { color: #6366f1; text-decoration: none; }
   footer a:hover { text-decoration: underline; }
 
-  @media (max-width: 640px) {
-    .nav { padding: 0 20px; } .nav-links { display: none; }
+  @media (max-width: 768px) {
+    .nav { padding: 0 20px; }
+    .nav-divider, .nav-links { display: none !important; }
     .hero { padding: 36px 20px 28px; }
     .grid { padding: 0 20px 60px; }
   }
@@ -66,8 +69,9 @@
 <body>
 
 <nav class="nav">
-  <div style="display:flex;align-items:center;gap:24px;">
+  <div style="display:flex;align-items:center;">
     <a href="." class="nav-logo">~/<span>tmux</span></a>
+    <div class="nav-divider" id="nav-divider" style="display:none;"></div>
     <div class="nav-links" id="nav-links"></div>
   </div>
   <span class="nav-badge">Claude Agent</span>
@@ -91,8 +95,9 @@
     .then(commands => {
       // 네비게이션 — stable 커맨드만
       const navLinks = document.getElementById('nav-links');
-      commands
-        .filter(c => c.status === 'stable')
+      const stableCommands = commands.filter(c => c.status === 'stable');
+      if (stableCommands.length > 0) document.getElementById('nav-divider').style.display = '';
+      stableCommands
         .forEach(c => {
           const a = document.createElement('a');
           a.href = c.tutorial;

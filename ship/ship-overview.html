@@ -9,21 +9,88 @@
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  body {
-    font-family: 'Noto Sans KR', sans-serif;
-    background: #f4f5f7;
-    color: #1a1a2e;
-    padding: 40px 24px;
-    min-height: 100vh;
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --accent: #4f46e5;
+    --header-h: 96px;
   }
 
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── 공통 헤더 ── */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #fff;
+    box-shadow: 0 1px 0 var(--border);
+  }
+  .top-nav {
+    padding: 0 48px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .nav-left { display: flex; align-items: center; gap: 4px; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
+  .nav-logo span { color: #6366f1; }
+  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
+  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
+  .nav-link.active { background: #eef2ff; color: var(--accent); }
+  .nav-badge { font-size: 11px; font-weight: 600; background: #eef2ff; color: var(--accent); padding: 3px 10px; border-radius: 20px; }
+  .breadcrumb {
+    padding: 9px 48px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
+  .breadcrumb a:hover { color: var(--accent); }
+  .bc-sep { color: #d1d5db; margin: 0 2px; }
+  .bc-current { color: var(--text-primary); font-weight: 500; }
+
+  /* ── 페이지 컨테이너 ── */
   .page {
-    max-width: 960px;
+    max-width: 1008px;
     margin: 0 auto;
+    padding: 32px 48px 80px;
     display: flex;
     flex-direction: column;
     gap: 20px;
+    flex: 1;
+    width: 100%;
   }
+
+  /* ── 푸터 ── */
+  .site-footer {
+    text-align: center;
+    padding: 28px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    background: #fff;
+    margin-top: auto;
+  }
+  .site-footer a { color: #6366f1; text-decoration: none; }
+  .site-footer a:hover { text-decoration: underline; }
 
   /* ── 헤더 ── */
   .header {
@@ -406,13 +473,38 @@
     margin-top: 1px;
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 768px) {
+    .top-nav { padding: 0 20px; }
+    .nav-divider, .breadcrumb { padding-left: 20px; padding-right: 20px; }
+    .page { padding: 24px 20px 60px; }
     .grid-2 { grid-template-columns: 1fr; }
     .agent-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .agent-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
+
+<header class="site-header">
+  <nav class="top-nav">
+    <div class="nav-left">
+      <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
+      <div class="nav-divider"></div>
+      <a href="ship-tutorial.html" class="nav-link active">ship</a>
+    </div>
+    <span class="nav-badge">Claude Agent</span>
+  </nav>
+  <div class="breadcrumb">
+    <a href="../index.html">~/tmux</a>
+    <span class="bc-sep">/</span>
+    <a href="ship-tutorial.html">ship</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">개요</span>
+  </div>
+</header>
+
 <div class="page">
 
   <!-- ── 헤더 ── -->
@@ -754,5 +846,10 @@
   </div>
 
 </div>
+
+<footer class="site-footer">
+  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
+</footer>
+
 </body>
 </html>
