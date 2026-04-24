@@ -2,7 +2,7 @@
 
 Claude Agent 기반 개발 자동화 커맨드 모음.
 
-📖 **문서 사이트**: [hwangdahee.github.io/tmux](https://hwangdahee.github.io/tmux)
+📖 **문서 사이트**: [project-hh-com.github.io/tmux](https://project-hh-com.github.io/tmux)
 
 ---
 
@@ -97,7 +97,7 @@ ship "결제 API 연동 및 완료 화면 구현"
 - 🔄 게이트 실패 시 자동 수정 (최대 3라운드)
 - 📬 PR 자동 생성 (게이트 실패 시 Draft PR)
 
-자세한 내용 → [ship 튜토리얼](https://hwangdahee.github.io/tmux/ship/ship-tutorial.html)
+자세한 내용 → [ship 튜토리얼](https://project-hh-com.github.io/tmux/ship/ship-tutorial.html)
 
 ---
 
@@ -112,7 +112,7 @@ ship "결제 API 연동 및 완료 화면 구현"
 3. Branch: `main` / `/ (root)`
 4. Save
 
-몇 분 후 `https://hwangdahee.github.io/tmux` 에서 확인 가능.
+몇 분 후 `https://project-hh-com.github.io/tmux` 에서 확인 가능.
 
 ### 로컬 미리보기
 
