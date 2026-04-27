@@ -719,6 +719,8 @@ git push origin ${BRANCH_NAME}
   - CI 게이트 실패 상태면 --draft 플래그 추가
   - PR 제목: feat: ${COMMIT_SUMMARY}
   - PR 본문 구성:
+    ## 요청
+    ${FEATURE}
     ## Summary
     (plan.md 요약 — Read 툴로 읽어서 2-3줄로 요약)
     ## 에이전트 리포트
