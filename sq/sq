@@ -139,6 +139,7 @@ run_debate() {
   while [[ $ROUND -lt $MAX_ROUNDS ]] && [[ "$VERDICT" != "CONSENSUS" ]]; do
     ROUND=$((ROUND + 1))
     echo ""
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | 🔴 Red 공격"
     echo "  🔴 Round ${ROUND}/${MAX_ROUNDS} — Red 공격 중..."
 
     cat > "${FLAG_DIR}/red_${FOCUS}_${ROUND}.txt" << REDEOF
@@ -155,10 +156,10 @@ REDEOF
     claude -p "$(cat "${FLAG_DIR}/red_${FOCUS}_${ROUND}.txt")" \
       --allowedTools "Read,Write,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/red_${FOCUS}_${ROUND}.log"
 
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | 🔵 Blue 방어"
     echo "  🔵 Round ${ROUND}/${MAX_ROUNDS} — Blue 방어 중..."
     cat > "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.txt" << BLUEEOF
 당신은 blue 에이전트입니다. Red의 공격을 검토하고 각 항목을 ACCEPT/MITIGATE/REJECT로 판정하세요.
-ACCEPT 또는 MITIGATE 항목은 실제로 파일을 수정해 반영하세요.
 
 주제: ${TOPIC}
 원본 작업: ${FEATURE}
@@ -166,11 +167,25 @@ ACCEPT 또는 MITIGATE 항목은 실제로 파일을 수정해 반영하세요.
 검토 대상 파일 (Read 툴로 읽으세요): ${CONTEXT_FILE}
 Red 공격 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/red_${FOCUS}_${ROUND}.md
 
+## 수정 시 반드시 지켜야 할 규칙
+
+ACCEPT 또는 MITIGATE 항목은 실제로 파일을 수정해 반영하세요.
+
+**동일 결함 전수 수정 — 가장 중요:**
+Red가 특정 위치의 결함을 지적했더라도, 수정 전에 반드시 Grep 툴로 동일 패턴이 파일 전체에 몇 군데 더 있는지 확인하세요.
+같은 결함이 다른 함수·섹션에도 존재하면 모두 함께 수정해야 합니다.
+한 곳만 고치고 나머지를 남기면 "착각만 심어주는" 불완전한 수정이 됩니다.
+
+수정 완료 후 blue_${FOCUS}_${ROUND}.md 에 아래 형식으로 저장하세요:
+- 각 항목: ACCEPT/MITIGATE/REJECT 판정 + 수정 내용 요약
+- 전수 수정 항목은 "N곳 모두 수정" 명시
+
 판정 및 수정 결과를 ${FLAG_DIR}/blue_${FOCUS}_${ROUND}.md 에 저장하세요.
 BLUEEOF
     claude -p "$(cat "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.txt")" \
       --allowedTools "Read,Write,Edit,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.log"
 
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | ⚖️ Judge 판정 중"
     echo "  ⚖️  Round ${ROUND}/${MAX_ROUNDS} — Judge 판정 중..."
     cat > "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.txt" << JUDGEEOF
 당신은 judge 에이전트입니다. Red/Blue 토론을 심판하세요.
@@ -193,6 +208,7 @@ JUDGEEOF
     VERDICT=$(grep "^VERDICT:" "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.md" 2>/dev/null | head -1 | awk '{print $2}')
     VERDICT="${VERDICT:-CONTINUE}"
     echo "  ⚖️  판정: ${VERDICT}"
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | ⚖️ → **${VERDICT}**"
     # REWORK는 루프를 즉시 탈출 (다음 라운드 없이 Wave 재실행)
     [[ "$VERDICT" == "REWORK" ]] && break
   done
@@ -371,6 +387,30 @@ echo "  🌿 브랜치: $BRANCH_NAME"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
+# ── TIMELINE.md 초기화 ──────────────────────────────────────
+# 실행 흐름을 한눈에 추적할 수 있는 단일 파일
+TIMELINE_FILE="${FLAG_DIR}/TIMELINE.md"
+cat > "${TIMELINE_FILE}" << TLHDR
+# sq 실행 타임라인
+
+**작업**: ${FEATURE}
+**브랜치**: ${BRANCH_NAME}
+**시작**: $(date "+%Y-%m-%d %H:%M:%S")
+**FLAG_DIR**: ${FLAG_DIR}
+**REPORT_DIR**: ${SQ_OUTPUT_DIR}
+
+| 시각 | 단계 | 내용 |
+|------|------|------|
+TLHDR
+
+# tl — TIMELINE.md 에 한 줄 추가
+tl() {
+  printf "| %s | %s |\n" "$(date +%H:%M:%S)" "$1" >> "${TIMELINE_FILE}"
+}
+
+tl "🚀 시작 | \`sq \"${FEATURE}\"\`"
+tl "🌿 브랜치 | \`${BRANCH_NAME}\`"
+
 # ── DB 연결 테스트 + 사전 스냅샷 ────────────────────────────
 echo "🗄️  DB 연결 확인 중..."
 DB_AVAILABLE=false
@@ -380,12 +420,15 @@ if command -v psql &> /dev/null; then
       > "${FLAG_DIR}/db_check.log" 2>&1; then
     echo "  ✅ DB 연결 성공 (danble read-only replica)"
     DB_AVAILABLE=true
+    tl "🗄️ DB | ✅ 연결 성공 (danble read-only replica)"
   else
     echo "  ⚠️  DB 연결 실패 — 에이전트는 DB 없이 동작합니다"
     echo "     (상세: ${FLAG_DIR}/db_check.log)"
+    tl "🗄️ DB | ⚠️ 연결 실패 — 에이전트 DB 없이 동작"
   fi
 else
   echo "  ⚠️  psql 미설치 — 'sq-setup' 스크립트로 환경을 먼저 설정하세요"
+  tl "🗄️ DB | ⚠️ psql 미설치"
 fi
 
 # ── 사전 스냅샷 (Before) ─────────────────────────────────────
@@ -449,6 +492,7 @@ echo ""
 
 echo "📋 Phase 1: 설계 검토 및 에이전트 선택..."
 echo ""
+tl "📋 Phase 1 | Architect 시작"
 
 cat > "${FLAG_DIR}/architect_prompt.txt" << PROMPTEOF
 당신은 architect입니다. 요청: "${FEATURE}"
@@ -508,6 +552,10 @@ claude -p "$(cat "${FLAG_DIR}/architect_prompt.txt")" --allowedTools "Read,Write
 
 echo ""
 echo "✅ Phase 1 완료"
+
+SELECTED_AGENTS=""
+[[ -f "${FLAG_DIR}/agents.txt" ]] && SELECTED_AGENTS=$(paste -sd "·" "${FLAG_DIR}/agents.txt" 2>/dev/null || cat "${FLAG_DIR}/agents.txt" | tr '\n' '·' | sed 's/·$//')
+tl "📋 Phase 1 | ✅ 완료 — 에이전트: ${SELECTED_AGENTS:-(미선택)}"
 
 if [[ -f "${FLAG_DIR}/plan.md" ]]; then
   echo ""
@@ -1048,6 +1096,7 @@ while true; do
     echo "  🔄 REWORK Round ${REWORK_COUNT}/${MAX_REWORK} — Wave 재실행"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
+    tl "🔄 REWORK | Wave 재실행 (${REWORK_COUNT}회째)"
     # done 파일 초기화
     while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
       rm -f "${FLAG_DIR}/${AGENT_NAME}.done"
@@ -1065,7 +1114,9 @@ while true; do
     wait_wave "${FLAG_DIR}/agents_wave_a.txt" "Wave A"
     # Wave A 패널은 Wave B가 시작될 때까지 유지 (cleanup 하지 않음)
     echo "  ✅ Wave A 완료"
+    tl "⚡ Wave A | ✅ 완료"
     auto_commit "sq" "분석"
+    tl "💾 커밋 | Wave A"
 
     if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
       echo ""
@@ -1077,7 +1128,9 @@ while true; do
       wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
       cleanup_wave    # A + B 모두 정리
       echo "  🧹 Wave A+B 패널 정리 완료"
+      tl "⚡ Wave B | ✅ 완료"
       auto_commit "sq" "평가"
+      tl "💾 커밋 | Wave B"
       take_snapshot "after"
     else
       cleanup_wave    # Wave B 없으면 A만 정리
@@ -1089,6 +1142,8 @@ while true; do
     SESSION_LIST_FILE="${FLAG_DIR}/agent_sessions.txt"
     > "$SESSION_LIST_FILE"
 
+    WA_AGENTS=$(awk -F'|' '{print $1}' "${FLAG_DIR}/agents_wave_a.txt" | tr '\n' '·' | sed 's/·$//')
+    tl "⚡ Wave A | 시작 — ${WA_AGENTS}"
     echo "  ▶ Wave A (분석/실행) 시작..."
     while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
       SESSION="sq-${AGENT_NAME}"
@@ -1145,6 +1200,7 @@ while true; do
 done
 
 
+tl "🔬 Phase 3.5 | 사이드 이펙트 영향도 분석 시작"
 echo "🔬 Phase 3.5: 사이드 이펙트 영향도 분석"
 echo ""
 
@@ -1234,6 +1290,7 @@ else
 fi
 echo ""
 
+tl "🔍 Phase 4 | 산출물 검증 게이트"
 echo "🔍 Phase 4: 산출물 검증 게이트"
 echo ""
 GATE_PASS=true
@@ -1289,6 +1346,7 @@ while ! $GATE_PASS && [[ $FIX_ROUND -lt $MAX_FIX_ROUNDS ]]; do
   FIX_ROUND=$((FIX_ROUND + 1))
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  tl "🔄 Phase 5 | 보완 Round ${FIX_ROUND}/${MAX_FIX_ROUNDS}"
   echo "🔄 Phase 5: 산출물 보완 Round ${FIX_ROUND}/${MAX_FIX_ROUNDS}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
@@ -1337,8 +1395,10 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if $GATE_PASS; then
   echo "  🎉 모든 게이트 통과!"
+  tl "🔍 Phase 4 | ✅ 모든 게이트 통과"
 else
   echo "  ⚠️  ${MAX_FIX_ROUNDS}회 자동 수정 후에도 게이트 실패"
+  tl "🔍 Phase 4 | ❌ 게이트 실패 (${MAX_FIX_ROUNDS}회 보완 후)"
   echo "  로그: ${FLAG_DIR}/"
   echo "  (게이트 실패 상태로 PR을 Draft 생성합니다)"
 fi
@@ -1443,6 +1503,7 @@ ${FLAG_DIR}/release_report.md 에 저장:
 - 사용자에게 질문하지 마세요
 RMEOF
 
+tl "📦 Phase 6 | 릴리스 매니저 시작"
 echo "📦 Phase 6: 릴리스 매니저 실행 중..."
 echo ""
 claude -p "$(cat "${FLAG_DIR}/release_manager_prompt.txt")" \
@@ -1458,3 +1519,42 @@ else
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# ── SUMMARY.md 생성 ──────────────────────────────────────────
+SUMMARY_FILE="${FLAG_DIR}/SUMMARY.md"
+PR_URL=$(grep -o 'https://github.com[^ ]*pull/[0-9]*' "${FLAG_DIR}/release_manager.log" 2>/dev/null | head -1 || echo "(PR URL 미확인)")
+SCORED_COUNT_F=$(python3 -c "import json,os; d=json.load(open('${FLAG_DIR}/scores.json')) if os.path.exists('${FLAG_DIR}/scores.json') else []; print(len(d))" 2>/dev/null || echo "0")
+GATE_LABEL="✅ 통과"
+$GATE_PASS || GATE_LABEL="❌ 실패"
+
+cat > "${SUMMARY_FILE}" << SUMEOF
+# sq 실행 요약
+
+| 항목 | 값 |
+|------|-----|
+| 작업 | ${FEATURE} |
+| 브랜치 | \`${BRANCH_NAME}\` |
+| 시작 | $(head -4 "${TIMELINE_FILE}" | grep "시작" | awk -F'\\*\\*' '{print $2}' || date "+%Y-%m-%d %H:%M:%S") |
+| 종료 | $(date "+%Y-%m-%d %H:%M:%S") |
+| 게이트 | ${GATE_LABEL} |
+| 채점 키워드 | ${SCORED_COUNT_F}개 |
+| PR | ${PR_URL} |
+
+## 주요 파일
+
+| 파일 | 설명 |
+|------|------|
+| [TIMELINE.md](TIMELINE.md) | 단계별 실행 타임라인 |
+| [plan.md](plan.md) | Architect 설계 계획 |
+| [scores.json](scores.json) | 키워드별 채점 결과 |
+| [snapshot_before.md](snapshot_before.md) | DB 스냅샷 (전) |
+| [snapshot_after.md](snapshot_after.md) | DB 스냅샷 (후) |
+| [impact_analysis.md](impact_analysis.md) | 영향도 분석 |
+| [git.log](git.log) | git 커밋/푸시 로그 |
+
+리포트: \`${SQ_OUTPUT_DIR}/\`
+SUMEOF
+
+tl "✅ 완료 | PR: ${PR_URL}"
+echo ""
+echo "📋 실행 요약: ${SUMMARY_FILE}"
+echo "📋 타임라인: ${TIMELINE_FILE}"
