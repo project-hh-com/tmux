@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+# sq-setup — sq 명령어 실행 환경 셋업
+# 사용법: bash sq-setup
+#
+# 수행 작업:
+#   1. DB 자격증명을 ~/.config/sq/db.env 에 안전하게 저장 (git 비추적)
+#   2. psql 설치 확인 / Homebrew로 자동 설치
+#   3. danble DB 연결 테스트
+#   4. sq 명령어를 PATH에 등록 (심볼릭 링크)
+
+set -euo pipefail
+
+SQ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN_DIR="${HOME}/.local/bin"
+SQ_DB_ENV="${HOME}/.config/sq/db.env"
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🔧 sq 환경 셋업"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# ── Step 1: DB 자격증명 저장 ─────────────────────────────────
+echo "1/4  DB 자격증명 설정..."
+mkdir -p "${HOME}/.config/sq"
+
+if [[ -f "${SQ_DB_ENV}" ]]; then
+  echo "     기존 자격증명 파일 발견: ${SQ_DB_ENV}"
+  echo -n "     덮어쓰시겠습니까? [y/N] "
+  read -r OVERWRITE
+  if [[ ! "${OVERWRITE}" =~ ^[Yy]$ ]]; then
+    echo "     ⏭️  기존 설정 유지"
+    source "${SQ_DB_ENV}"
+    SKIP_CREDENTIAL_INPUT=1
+  fi
+fi
+
+if [[ "${SKIP_CREDENTIAL_INPUT:-0}" != "1" ]]; then
+  echo "     DB 접속 정보를 입력하세요 (Enter = 기본값 사용)"
+  echo ""
+
+  read -r -p "     PGHOST   [production-danble-v3-read-dms.cnxuazoc6fmf.ap-northeast-2.rds.amazonaws.com]: " INPUT_HOST
+  PGHOST="${INPUT_HOST:-production-danble-v3-read-dms.cnxuazoc6fmf.ap-northeast-2.rds.amazonaws.com}"
+
+  read -r -p "     PGDATABASE [danble]: " INPUT_DB
+  PGDATABASE="${INPUT_DB:-danble}"
+
+  read -r -p "     PGUSER   [danble_read_only]: " INPUT_USER
+  PGUSER="${INPUT_USER:-danble_read_only}"
+
+  # 비밀번호는 화면에 표시 안 함
+  read -r -s -p "     PGPASSWORD: " INPUT_PASS
+  echo ""
+  PGPASSWORD="${INPUT_PASS}"
+
+  read -r -p "     PGPORT   [5432]: " INPUT_PORT
+  PGPORT="${INPUT_PORT:-5432}"
+
+  # ~/.config/sq/db.env 저장 (chmod 600)
+  cat > "${SQ_DB_ENV}" << ENVEOF
+# danble PostgreSQL read-only replica
+# 생성: $(date)
+# 이 파일은 git에 포함되지 않습니다 — 로컬 전용
+export PGHOST="${PGHOST}"
+export PGDATABASE="${PGDATABASE}"
+export PGUSER="${PGUSER}"
+export PGPASSWORD="${PGPASSWORD}"
+export PGPORT="${PGPORT}"
+export PGSSLMODE="require"
+ENVEOF
+
+  chmod 600 "${SQ_DB_ENV}"
+  echo "     ✅ 자격증명 저장 완료: ${SQ_DB_ENV} (chmod 600)"
+fi
+
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT
+export PGSSLMODE="require"
+
+# ── Step 2: psql 설치 확인 ────────────────────────────────────
+echo ""
+echo "2/4  psql 설치 확인..."
+if command -v psql &> /dev/null; then
+  PSQL_VERSION=$(psql --version 2>&1 | head -1)
+  echo "     ✅ psql 이미 설치됨: ${PSQL_VERSION}"
+else
+  echo "     ⚠️  psql 미설치 — Homebrew로 설치 시도..."
+  if command -v brew &> /dev/null; then
+    echo "     brew install libpq 실행 중..."
+    brew install libpq
+    LIBPQ_BIN="$(brew --prefix libpq)/bin"
+    if [[ ! ":$PATH:" == *":${LIBPQ_BIN}:"* ]]; then
+      echo "" >> "${HOME}/.zshrc"
+      echo "# libpq (psql) — sq-setup 추가" >> "${HOME}/.zshrc"
+      echo "export PATH=\"${LIBPQ_BIN}:\$PATH\"" >> "${HOME}/.zshrc"
+      export PATH="${LIBPQ_BIN}:${PATH}"
+      echo "     PATH에 ${LIBPQ_BIN} 추가됨 (재시작 후 영구 적용)"
+    fi
+    if ! command -v psql &> /dev/null; then
+      echo "     ❌ PATH 문제 — 터미널에서 직접 실행하세요:"
+      echo "        export PATH=\"${LIBPQ_BIN}:\$PATH\""
+      exit 1
+    fi
+    echo "     ✅ psql 설치 완료: $(psql --version | head -1)"
+  else
+    echo "     ❌ Homebrew 미설치. 수동 설치:"
+    echo "        /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    echo "        brew install libpq"
+    exit 1
+  fi
+fi
+
+# ── Step 3: DB 연결 테스트 ────────────────────────────────────
+echo ""
+echo "3/4  danble DB 연결 테스트..."
+DB_TEST_RESULT=$(PGPASSWORD="${PGPASSWORD}" psql \
+  -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" \
+  --no-password --connect-timeout=15 \
+  -c "SELECT COUNT(*) AS keyword_count FROM search_keywords LIMIT 1;" \
+  -t 2>&1 || true)
+
+if echo "${DB_TEST_RESULT}" | grep -qE "^[[:space:]]*[0-9]+"; then
+  KEYWORD_COUNT=$(echo "${DB_TEST_RESULT}" | tr -d '[:space:]')
+  echo "     ✅ DB 연결 성공!"
+  echo "     📊 search_keywords 테이블: ${KEYWORD_COUNT}개 키워드"
+  echo ""
+  echo "     주요 테이블 확인..."
+  TABLES=("search_keywords" "search_logs" "search_keyword_rankings" "search_keyword_relations" "product_display_keywords" "product_displays")
+  for TABLE in "${TABLES[@]}"; do
+    COUNT=$(PGPASSWORD="${PGPASSWORD}" psql \
+      -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" \
+      --no-password --connect-timeout=10 \
+      -c "SELECT COUNT(*) FROM ${TABLE};" -t 2>/dev/null | tr -d '[:space:]' || echo "오류")
+    printf "     %-38s %s행\n" "${TABLE}" "${COUNT}"
+  done
+else
+  echo "     ❌ DB 연결 실패:"
+  echo "     ${DB_TEST_RESULT}"
+  echo ""
+  echo "     VPN/네트워크를 확인하고 다시 시도하세요."
+  echo "     자격증명 재설정: rm ${SQ_DB_ENV} && bash sq-setup"
+fi
+
+# ── Step 4: sq 명령어 PATH 등록 ──────────────────────────────
+echo ""
+echo "4/4  sq 명령어 PATH 등록..."
+mkdir -p "${BIN_DIR}"
+
+SQ_SCRIPT="${SQ_DIR}/sq"
+SQ_LINK="${BIN_DIR}/sq"
+
+if [[ ! -f "${SQ_SCRIPT}" ]]; then
+  echo "     ❌ sq 스크립트 없음: ${SQ_SCRIPT}"
+  exit 1
+fi
+
+chmod +x "${SQ_SCRIPT}"
+[[ -L "${SQ_LINK}" ]] && rm "${SQ_LINK}"
+ln -s "${SQ_SCRIPT}" "${SQ_LINK}"
+echo "     ✅ 심볼릭 링크: ${SQ_LINK} → ${SQ_SCRIPT}"
+
+if [[ ! ":$PATH:" == *":${BIN_DIR}:"* ]]; then
+  echo "" >> "${HOME}/.zshrc"
+  echo "# sq (Search Quality) PATH" >> "${HOME}/.zshrc"
+  echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "${HOME}/.zshrc"
+  echo "     ~/.zshrc 에 PATH 추가됨 → source ~/.zshrc 실행 필요"
+else
+  echo "     ✅ ${BIN_DIR} 이미 PATH에 있음"
+fi
+
+# ── 완료 ─────────────────────────────────────────────────────
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ✅ sq 환경 셋업 완료!"
+echo ""
+echo "  사용법:  sq \"검색 품질 개선 설명\""
+echo "  예시:    sq \"카테고리 매핑 정확도 개선\""
+echo ""
+echo "  자격증명 위치: ${SQ_DB_ENV} (로컬 전용, git 비추적)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""

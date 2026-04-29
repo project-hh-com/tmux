@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sq 설치 가이드 — Search Quality 워크플로</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --accent: #0891b2;
+    --header-h: 96px;
+  }
+
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.7;
+  }
+
+  /* ── 공통 헤더 ── */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #fff;
+    box-shadow: 0 1px 0 var(--border);
+  }
+  .top-nav {
+    padding: 0 48px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .nav-left { display: flex; align-items: center; gap: 4px; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
+  .nav-logo span { color: #0891b2; }
+  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
+  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
+  .nav-link.active { background: #ecfeff; color: var(--accent); }
+  .nav-badge { font-size: 11px; font-weight: 600; background: #ecfeff; color: #0891b2; padding: 3px 10px; border-radius: 20px; }
+  .breadcrumb {
+    padding: 9px 48px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
+  .breadcrumb a:hover { color: var(--accent); }
+  .bc-sep { color: #d1d5db; margin: 0 2px; }
+  .bc-current { color: var(--text-primary); font-weight: 500; }
+
+  /* ── 레이아웃 ── */
+  .layout {
+    display: flex;
+    min-height: calc(100vh - var(--header-h));
+  }
+
+  /* ── 사이드바 ── */
+  .sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+    position: sticky;
+    top: var(--header-h);
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto;
+  }
+  .sidebar-logo {
+    padding: 0 24px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sidebar-logo .logo-icon { font-size: 22px; line-height: 1; }
+  .sidebar-logo .logo-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .sidebar-logo .logo-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 1px;
+  }
+  .nav-section-title {
+    padding: 6px 24px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+  .nav-item {
+    display: block;
+    padding: 8px 24px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  .nav-item:hover {
+    color: var(--accent);
+    background: #ecfeff;
+    border-left-color: var(--accent);
+  }
+  .nav-item .nav-num {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-right: 6px;
+  }
+
+  /* ── 메인 컨텐츠 ── */
+  .main {
+    flex: 1;
+    padding: 48px 56px;
+    max-width: 800px;
+  }
+
+  /* ── 페이지 헤더 ── */
+  .page-header {
+    margin-bottom: 48px;
+    padding-bottom: 32px;
+    border-bottom: 2px solid var(--border);
+  }
+  .page-header h1 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+  }
+  .page-header .subtitle {
+    margin-top: 8px;
+    font-size: 16px;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+  .page-header .meta {
+    margin-top: 16px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .meta-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 20px;
+    background: #ecfeff;
+    color: #0891b2;
+  }
+
+  /* ── 섹션 ── */
+  .section {
+    margin-bottom: 60px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .section-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .section-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  /* ── 컨텐츠 요소 ── */
+  h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 24px 0 10px;
+  }
+  h3:first-child { margin-top: 0; }
+
+  p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 12px;
+  }
+
+  /* ── 코드 ── */
+  .code-block {
+    background: #1e2030;
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 12px 0;
+  }
+  .code-header {
+    background: #2a2d3e;
+    padding: 8px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #67e8f9;
+    font-weight: 500;
+  }
+  .code-body {
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #a9b1d6;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+  .code-body .cm { color: #565f89; }
+  .code-body .ck { color: #67e8f9; }
+  .code-body .cv { color: #7aa2f7; }
+  .code-body .cs { color: #9ece6a; }
+  .code-body .cn { color: #ff9e64; }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: #ecfeff;
+    color: #0891b2;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  /* ── 알림 박스 ── */
+  .notice {
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 13px;
+    margin: 14px 0;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .notice-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .notice-text { color: var(--text-secondary); line-height: 1.6; }
+  .notice-title { font-weight: 700; margin-bottom: 4px; }
+  .notice.tip    { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .notice.warn   { background: #fffbeb; border: 1px solid #fde68a; }
+  .notice.info   { background: #ecfeff; border: 1px solid #a5f3fc; }
+  .notice.danger { background: #fef2f2; border: 1px solid #fecaca; }
+
+  /* ── 테이블 ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 12px 0;
+  }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    background: #f9fafb;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  td {
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    vertical-align: top;
+  }
+  tr:hover td { background: #fafafa; }
+
+  /* ── 단계 리스트 ── */
+  .step-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .step-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    padding: 12px 16px;
+    background: #f9fafb;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    line-height: 1.5;
+  }
+  .step-list li .li-num {
+    width: 22px;
+    height: 22px;
+    background: var(--accent);
+    color: white;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* ── 플로우 다이어그램 ── */
+  .flow-diagram {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #374151;
+    line-height: 1.9;
+    margin: 12px 0;
+    white-space: pre-wrap;
+  }
+  .flow-phase { color: #0891b2; font-weight: 700; }
+  .flow-git   { color: #059669; font-weight: 700; }
+  .flow-debate{ color: #7c3aed; font-weight: 700; }
+  .flow-arrow { color: #9ca3af; }
+  .flow-desc  { color: #6b7280; }
+
+  /* ── 설치 요약 카드 ── */
+  .install-steps {
+    counter-reset: install;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 12px 0;
+  }
+  .install-step {
+    counter-increment: install;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .install-step::before {
+    content: counter(install);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #f3f4f6;
+    color: #6b7280;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .install-step.highlight { background: #ecfeff; border-color: #a5f3fc; }
+  .install-step.highlight::before { background: var(--accent); color: white; }
+
+  /* ── tmux 미리보기 ── */
+  .tmux-box {
+    background: #1e2030;
+    border-radius: 10px;
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #a9b1d6;
+    margin: 12px 0;
+    line-height: 1.7;
+    white-space: pre;
+  }
+
+  /* ── 배지 ── */
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .badge-blue   { background: #eff6ff; color: #2563eb; }
+  .badge-green  { background: #f0fdf4; color: #16a34a; }
+  .badge-amber  { background: #fffbeb; color: #d97706; }
+  .badge-red    { background: #fef2f2; color: #dc2626; }
+  .badge-cyan   { background: #ecfeff; color: #0891b2; }
+
+  /* ── 구분선 ── */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+
+  /* ── 푸터 ── */
+  .site-footer {
+    text-align: center;
+    padding: 28px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    background: #fff;
+  }
+  .site-footer a { color: #0891b2; text-decoration: none; }
+  .site-footer a:hover { text-decoration: underline; }
+
+  @media (max-width: 768px) {
+    .top-nav { padding: 0 20px; }
+    .breadcrumb { padding: 9px 20px; }
+    .sidebar { display: none; }
+    .main { padding: 32px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="top-nav">
+    <div class="nav-left">
+      <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
+      <div class="nav-divider"></div>
+      <a href="sq-tutorial.html" class="nav-link active">sq</a>
+    </div>
+    <span class="nav-badge">Search Quality</span>
+  </nav>
+  <div class="breadcrumb">
+    <a href="../index.html">~/tmux</a>
+    <span class="bc-sep">/</span>
+    <a href="sq-overview.html">sq</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">튜토리얼</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ── 사이드바 ── -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">🔍</div>
+      <div>
+        <div class="logo-title">sq</div>
+        <div class="logo-sub">설치 가이드</div>
+      </div>
+    </div>
+    <div class="nav-section-title">사전 준비</div>
+    <a href="#s1" class="nav-item"><span class="nav-num">1</span>사전 요구사항</a>
+    <a href="#s2" class="nav-item"><span class="nav-num">2</span>Claude Code 설치</a>
+    <div class="nav-section-title">설정</div>
+    <a href="#s3" class="nav-item"><span class="nav-num">3</span>전역 설정 파일</a>
+    <a href="#s4" class="nav-item"><span class="nav-num">4</span>CLAUDE.md 작성</a>
+    <a href="#s5" class="nav-item"><span class="nav-num">5</span>Agent 파일 설치</a>
+    <a href="#s6" class="nav-item"><span class="nav-num">6</span>Command 파일 설치</a>
+    <div class="nav-section-title">sq 설치</div>
+    <a href="#s7" class="nav-item"><span class="nav-num">7</span>sq 스크립트 설치</a>
+    <a href="#s-db" class="nav-item"><span class="nav-num">↳</span>DB 환경 설정</a>
+    <a href="#s8" class="nav-item"><span class="nav-num">8</span>tmux 설정</a>
+    <div class="nav-section-title">사용</div>
+    <a href="#s9" class="nav-item"><span class="nav-num">9</span>프로젝트별 설정</a>
+    <a href="#s10" class="nav-item"><span class="nav-num">10</span>사용법</a>
+    <a href="#s11" class="nav-item"><span class="nav-num">—</span>문제 해결</a>
+  </nav>
+
+  <!-- ── 메인 ── -->
+  <main class="main">
+
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <h1>🔍 sq 설치 가이드</h1>
+      <p class="subtitle">새 디바이스에서 처음부터 설치하는 기준 튜토리얼</p>
+      <div class="meta">
+        <span class="meta-badge">macOS</span>
+        <span class="meta-badge">Claude Code</span>
+        <span class="meta-badge">tmux</span>
+        <span class="meta-badge">OpenSearch</span>
+        <span class="meta-badge">PostgreSQL</span>
+      </div>
+    </div>
+
+    <!-- ── 동작 흐름 요약 ── -->
+    <div class="section">
+      <div class="flow-diagram"><span class="flow-git">🌿 브랜치 생성</span>  sq/{slug}-{YYYYMMDD-HHmmss}  <span class="flow-desc">← 보호 브랜치면 자동 생성, 아니면 현재 브랜치 사용</span>
+<span class="flow-arrow">↓</span>
+<span class="flow-git">🗄️ DB 연결 확인</span>  ~/.config/sq/db.env 로드 → psql 연결 테스트  <span class="flow-desc">← 실패 시 경고만, 에이전트는 계속 실행</span>
+<span class="flow-arrow">↓</span>
+<span class="flow-phase">Phase 1</span>  Architect → plan.md + agents.txt 자동 생성  <span class="flow-desc">← DB 스키마 컨텍스트 포함</span>
+<span class="flow-arrow">↓</span>
+<span class="flow-debate">Debate 1</span>  🔴 Red 공격 → 🔵 Blue 수정 → ⚖️ Judge 판정  (최대 2라운드)
+<span class="flow-arrow">↓</span>
+<span class="flow-phase">Phase 3</span>  Wave A (opensearch · api · runner) 병렬 실행
+<span class="flow-arrow">↓</span>
+<span class="flow-git">💾 커밋/푸시</span>  Wave A 완료 후 자동 커밋
+<span class="flow-arrow">↓</span>
+<span class="flow-phase">Phase 3</span>  Wave B (scorer · reporter)  ← A 패널 유지된 채 시작
+<span class="flow-arrow">↓</span>
+<span class="flow-git">💾 커밋/푸시</span>  Wave B 완료 후 자동 커밋  →  A+B 패널 정리
+<span class="flow-arrow">↓</span>
+<span class="flow-debate">Debate 2</span>  분석 결과 토론  REWORK 시 Wave 재실행 (횟수 무제한)
+<span class="flow-arrow">↓</span>
+<span class="flow-phase">Phase 3.5</span>  사이드 이펙트 영향도 분석  <span class="flow-desc">← 변경 파일 분류 · 영향 범위 예측 · 위험도 평가</span>
+<span class="flow-arrow">↓</span>
+<span class="flow-phase">Phase 4</span>  tsc → eslint → test → build  (CI 하네스 게이트)
+<span class="flow-arrow">↓</span>
+<span class="flow-phase">Phase 5</span>  게이트 실패 시 자동 수정 (최대 3라운드, 라운드마다 커밋)
+<span class="flow-arrow">↓</span>
+<span class="flow-git">📬 PR 생성</span>  <strong>항상 실행</strong>  게이트 통과 → 일반 PR  /  실패 → Draft PR</div>
+    </div>
+
+    <!-- ── 1. 사전 요구사항 ── -->
+    <div class="section" id="s1">
+      <div class="section-header">
+        <div class="section-num">1</div>
+        <div class="section-title">사전 요구사항 설치</div>
+      </div>
+
+      <h3>Homebrew (미설치 시)</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body">/bin/bash -c <span class="cs">"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</span></div>
+      </div>
+
+      <h3>필수 도구</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># Node.js (nvm 권장)</span>
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+<span class="cv">nvm</span> install --lts && <span class="cv">nvm</span> use --lts
+
+<span class="cm"># tmux — wave 패널 분할에 필수</span>
+<span class="cv">brew</span> install tmux
+
+<span class="cm"># gh — PR 자동 생성에 필수</span>
+<span class="cv">brew</span> install gh && gh auth login</div>
+      </div>
+    </div>
+
+    <!-- ── 2. Claude Code ── -->
+    <div class="section" id="s2">
+      <div class="section-header">
+        <div class="section-num">2</div>
+        <div class="section-title">Claude Code 설치 및 인증</div>
+      </div>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cv">npm</span> install -g @anthropic-ai/claude-code
+<span class="cv">claude</span>          <span class="cm"># 인증 (Anthropic 계정 필요)</span>
+<span class="cv">claude</span> --version</div>
+      </div>
+    </div>
+
+    <!-- ── 3. 전역 설정 ── -->
+    <div class="section" id="s3">
+      <div class="section-header">
+        <div class="section-num">3</div>
+        <div class="section-title">전역 설정 파일 구성</div>
+      </div>
+      <div class="code-block">
+        <div class="code-header">~/.claude/settings.json</div>
+        <div class="code-body"><span class="cv">mkdir</span> -p ~/.claude/agents ~/.claude/commands
+
+cat > ~/.claude/settings.json &lt;&lt; <span class="cs">'EOF'</span>
+{
+  <span class="cn">"env"</span>: {
+    <span class="cn">"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"</span>: <span class="cs">"1"</span>
+  },
+  <span class="cn">"permissions"</span>: {
+    <span class="cn">"allow"</span>: [
+      <span class="cs">"Read(**)"</span>, <span class="cs">"Write(**)"</span>, <span class="cs">"Edit(**)"</span>,
+      <span class="cs">"Bash(git *)"</span>, <span class="cs">"Bash(gh *)"</span>, <span class="cs">"Bash(npm *)"</span>, <span class="cs">"Bash(npx *)"</span>,
+      <span class="cs">"Bash(node *)"</span>, <span class="cs">"Bash(ls *)"</span>, <span class="cs">"Bash(cat *)"</span>, <span class="cs">"Bash(echo *)"</span>,
+      <span class="cs">"Bash(mkdir *)"</span>, <span class="cs">"Bash(cp *)"</span>, <span class="cs">"Bash(mv *)"</span>, <span class="cs">"Bash(rm *)"</span>,
+      <span class="cs">"Bash(touch *)"</span>, <span class="cs">"Bash(find *)"</span>, <span class="cs">"Bash(grep *)"</span>,
+      <span class="cs">"Bash(sed *)"</span>, <span class="cs">"Bash(awk *)"</span>, <span class="cs">"Bash(tmux *)"</span>
+    ],
+    <span class="cn">"deny"</span>: []
+  }
+}
+EOF</div>
+      </div>
+    </div>
+
+    <!-- ── 4. CLAUDE.md ── -->
+    <div class="section" id="s4">
+      <div class="section-header">
+        <div class="section-num">4</div>
+        <div class="section-title">글로벌 CLAUDE.md 작성</div>
+      </div>
+      <p>모든 프로젝트에서 자동 로드되는 전역 규칙. 스택·레이어 규칙·커밋 규칙 등을 작성합니다.</p>
+      <div class="code-block">
+        <div class="code-header">~/.claude/CLAUDE.md</div>
+        <div class="code-body">cat > ~/.claude/CLAUDE.md &lt;&lt; <span class="cs">'EOF'</span>
+<span class="cm"># 글로벌 하네스 규칙</span>
+
+<span class="cm">## 스택</span>
+- React Native (Expo) + TypeScript
+- Next.js 14+ App Router + TypeScript
+
+<span class="cm">## TypeScript 규칙</span>
+- strict: true 필수 — any 사용 금지
+- export 함수는 반환 타입 명시
+- Zod 로 런타임 검증
+
+<span class="cm">## 레이어 규칙 (단방향 import)</span>
+app/ → components/ → hooks/ → lib/ → services/ → types/
+
+<span class="cm">## 절대 금지</span>
+- .env* 커밋 / main 직접 push
+- 프로덕션 console.log / git push --force
+EOF</div>
+      </div>
+    </div>
+
+    <!-- ── 5. Agent 파일 ── -->
+    <div class="section" id="s5">
+      <div class="section-header">
+        <div class="section-num">5</div>
+        <div class="section-title">Agent 파일 설치</div>
+      </div>
+      <p>sq가 선택해서 실행하는 에이전트 정의 파일입니다. Wave A(분석/실행) / B(평가/보고)로 분류됩니다.</p>
+
+      <table>
+        <thead>
+          <tr><th>에이전트</th><th>Wave</th><th>역할</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>🔎 opensearch</td><td><span class="badge badge-blue">Wave A</span></td><td>OpenSearch 쿼리 DSL, boost/weight 최적화, 인덱스 매핑 검토</td></tr>
+          <tr><td>🔌 api</td><td><span class="badge badge-blue">Wave A</span></td><td>검색 API 파라미터 분석, 스크립트 수정, 응답 파싱 검증</td></tr>
+          <tr><td>🏃 runner</td><td><span class="badge badge-blue">Wave A</span></td><td>자동 검색 실행, 50개 단위 배치, JSON 결과 즉시 저장</td></tr>
+          <tr><td>📊 scorer</td><td><span class="badge badge-green">Wave B</span></td><td>100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분</td></tr>
+          <tr><td>📝 reporter</td><td><span class="badge badge-green">Wave B</span></td><td>MD/CSV 리포트 생성, 스크린샷 수집, 결과 문서화</td></tr>
+        </tbody>
+      </table>
+
+      <div class="code-block">
+        <div class="code-header">~/.claude/agents/ — 예시 (opensearch)</div>
+        <div class="code-body">cat > ~/.claude/agents/opensearch.md &lt;&lt; <span class="cs">'EOF'</span>
+---
+name: opensearch
+description: OpenSearch 쿼리 최적화 담당. 검색 정확도·관련성 향상.
+---
+당신은 OpenSearch 전문 에이전트입니다.
+- 쿼리 DSL(match/multi_match/bool) 분석 및 개선
+- boost/weight 파라미터 조정으로 관련성 향상
+- 인덱스 매핑, analyzer 설정 검토
+- 검색 결과 0건 원인 분석 및 fallback 쿼리 제안
+EOF
+
+<span class="cm"># 나머지 에이전트도 동일한 방식으로 생성</span>
+<span class="cm"># api.md / runner.md / scorer.md / reporter.md</span></div>
+      </div>
+    </div>
+
+    <!-- ── 6. Command 파일 ── -->
+    <div class="section" id="s6">
+      <div class="section-header">
+        <div class="section-num">6</div>
+        <div class="section-title">Command 파일 설치</div>
+      </div>
+      <div class="code-block">
+        <div class="code-header">~/.claude/commands/sq.md</div>
+        <div class="code-body">cat > ~/.claude/commands/sq.md &lt;&lt; <span class="cs">'EOF'</span>
+---
+description: danble OpenSearch 검색 품질 개선 자동 실행 (동적 에이전트 선택)
+---
+터미널에서 `sq "검색 품질 개선 설명"` 명령어를 사용하세요.
+EOF</div>
+      </div>
+    </div>
+
+    <!-- ── 7. sq 스크립트 설치 ── -->
+    <div class="section" id="s7">
+      <div class="section-header">
+        <div class="section-num">7</div>
+        <div class="section-title">sq 스크립트 설치</div>
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># 1. 레포 클론 (처음 한 번, ship과 공유)</span>
+<span class="cv">git</span> clone https://github.com/project-hh-com/tmux.git ~/development/tmux
+
+<span class="cm"># 2. 심볼릭 링크 생성 — 소스 파일 하나만 관리</span>
+<span class="cv">mkdir</span> -p ~/.local/bin
+<span class="cv">ln</span> -sf ~/development/tmux/sq/sq ~/.local/bin/sq
+
+<span class="cm"># 3. 실행 권한</span>
+<span class="cv">chmod</span> +x ~/.local/bin/sq
+
+<span class="cm"># 4. PATH 설정 (ship과 동일하게 이미 설정되어 있으면 스킵)</span>
+echo <span class="cs">'export PATH="$HOME/.local/bin:$PATH"'</span> >> ~/.zshrc
+source ~/.zshrc
+which sq  <span class="cm"># → /Users/[이름]/.local/bin/sq</span></div>
+      </div>
+
+      <div class="notice tip">
+        <div class="notice-icon">💡</div>
+        <div class="notice-text">
+          <div class="notice-title">심볼릭 링크의 장점</div>
+          <code>~/.local/bin/sq</code>은 <code>~/development/tmux/sq/sq</code>을 직접 가리켜요. 소스 파일 하나만 관리하면 되고, <code>git pull</code>만 해도 바로 최신 버전으로 실행됩니다.
+        </div>
+      </div>
+
+      <div class="notice info">
+        <div class="notice-icon">🔄</div>
+        <div class="notice-text">
+          <div class="notice-title">업데이트 방법</div>
+          <code>cd ~/development/tmux &amp;&amp; git pull</code> — 끝. ship과 sq 모두 한 번에 업데이트됩니다.
+        </div>
+      </div>
+
+      <h3>Git 워크플로 동작 방식</h3>
+      <p>sq는 실행 시작부터 끝까지 git 작업을 자동으로 처리합니다.</p>
+
+      <ul class="step-list">
+        <li>
+          <div class="li-num">1</div>
+          <div><strong>브랜치 자동 생성</strong> — <code>main</code>·<code>master</code>·<code>prd</code>·<code>develop</code>에서 실행하면 <code>sq/{slug}-{YYYYMMDD-HHmmss}</code> 브랜치를 자동 생성. 이미 feature 브랜치에 있으면 현재 브랜치 사용.</div>
+        </li>
+        <li>
+          <div class="li-num">2</div>
+          <div><strong>중간 커밋/푸시</strong> — Wave A 완료 후 (<code>sq: ... — 분석</code>), Wave B 완료 후 (<code>sq: ... — 평가</code>), 자동 수정 라운드마다 자동 커밋. 변경사항 없으면 스킵.</div>
+        </li>
+        <li>
+          <div class="li-num">3</div>
+          <div><strong>PR 생성 (항상 실행)</strong> — CI 게이트 통과 여부와 무관하게 Phase 6에서 항상 PR을 생성. 게이트 실패 시 Draft PR, 통과 시 일반 PR. 라벨 <code>Search Quality</code> 자동 부착.</div>
+        </li>
+      </ul>
+
+      <div class="notice danger">
+        <div class="notice-icon">🚫</div>
+        <div class="notice-text">
+          <div class="notice-title">PR 베이스 브랜치 보호</div>
+          릴리스 매니저는 <code>prd</code>·<code>master</code>를 베이스로 한 PR을 절대 생성하지 않습니다. 해당 상황이 감지되면 즉시 중단하고 사유를 보고합니다.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DB 환경 설정 ── -->
+    <div class="section" id="s-db">
+      <div class="section-header">
+        <div class="section-num" style="background:#059669;">🗄️</div>
+        <div class="section-title">DB 환경 설정 — sq-setup</div>
+      </div>
+
+      <p>sq 에이전트들은 danble PostgreSQL read-only replica에 직접 쿼리해 실제 키워드·점수·상품 데이터를 기반으로 분석합니다. <strong>자격증명은 git에 포함되지 않고</strong> 로컬 파일에만 보관됩니다.</p>
+
+      <div class="notice info">
+        <div class="notice-icon">🔐</div>
+        <div class="notice-text">
+          <div class="notice-title">보안 구조</div>
+          자격증명은 <code>~/.config/sq/db.env</code> (chmod 600)에만 저장됩니다. git 저장소의 <code>sq</code>, <code>sq-setup</code> 파일에는 비밀번호가 없으며 <code>.gitignore</code>로 env 파일 유출을 차단합니다.
+        </div>
+      </div>
+
+      <h3>sq-setup 실행</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># 최초 1회만 실행 (이후 sq 실행 시 자동으로 db.env 로드)</span>
+<span class="cv">bash</span> ~/development/tmux/sq/sq-setup</div>
+      </div>
+
+      <p>실행하면 순서대로 진행됩니다:</p>
+      <ul class="step-list">
+        <li>
+          <div class="li-num">1</div>
+          <div><strong>DB 자격증명 입력</strong> — Host / Database / User / Password(비표시) / Port를 대화식으로 입력. Enter로 기본값 사용. 입력한 값이 <code>~/.config/sq/db.env</code>에 chmod 600으로 저장됨.</div>
+        </li>
+        <li>
+          <div class="li-num">2</div>
+          <div><strong>psql 설치 확인</strong> — 미설치 시 <code>brew install libpq</code> 자동 실행. PATH도 자동 추가.</div>
+        </li>
+        <li>
+          <div class="li-num">3</div>
+          <div><strong>DB 연결 테스트</strong> — search_keywords 카운트 쿼리로 실제 접속 확인. 주요 검색 테이블 6개의 row 수를 출력.</div>
+        </li>
+        <li>
+          <div class="li-num">4</div>
+          <div><strong>sq PATH 등록</strong> — <code>~/.local/bin/sq</code> 심볼릭 링크 생성. PATH에 없으면 <code>~/.zshrc</code> 자동 추가.</div>
+        </li>
+      </ul>
+
+      <h3>에이전트별 DB 활용</h3>
+      <table>
+        <thead>
+          <tr><th>에이전트</th><th>DB 활용 방식</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>🔎 opensearch</td>
+            <td><code>search_keywords</code>의 auto_score/md_score 분포 조회 · result_product_count = 0 키워드 분석</td>
+          </tr>
+          <tr>
+            <td>🔌 api</td>
+            <td><code>search_logs</code>에서 최근 검색 패턴 분석 · <code>search_keyword_rankings</code> rank 분포 확인</td>
+          </tr>
+          <tr>
+            <td>🏃 runner</td>
+            <td><code>search_keywords</code>에서 rank 순 키워드 리스트 직접 추출 · 최근 7일 인기 검색어 보완</td>
+          </tr>
+          <tr>
+            <td>📊 scorer</td>
+            <td><code>product_displays</code>로 실제 상품 sale_status, price 검증 · <code>product_display_keywords</code> 정확도 확인</td>
+          </tr>
+          <tr>
+            <td>📝 reporter</td>
+            <td><code>search_keyword_relations</code> 커버리지 · DB 기준 기대 상품수 vs 실제 결과수 비교 포함</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="notice warn">
+        <div class="notice-icon">⚠️</div>
+        <div class="notice-text">
+          <div class="notice-title">VPN / 네트워크</div>
+          RDS read replica는 회사 네트워크 또는 VPN에서만 접근 가능할 수 있습니다. DB 연결 실패 시 VPN 연결을 먼저 확인하세요. 에이전트는 DB 없이도 동작하지만 분석 품질이 저하됩니다.
+        </div>
+      </div>
+
+      <h3>자격증명 재설정</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># db.env 삭제 후 sq-setup 재실행</span>
+<span class="cv">rm</span> ~/.config/sq/db.env
+<span class="cv">bash</span> ~/development/tmux/sq/sq-setup
+
+<span class="cm"># DB 직접 접속 (확인용)</span>
+<span class="ck">source</span> ~/.config/sq/db.env
+<span class="cv">psql</span> -h <span class="cs">"${PGHOST}"</span> -U <span class="cs">"${PGUSER}"</span> -d <span class="cs">"${PGDATABASE}"</span> --no-password</div>
+      </div>
+    </div>
+
+    <!-- ── 8. tmux ── -->
+    <div class="section" id="s8">
+      <div class="section-header">
+        <div class="section-num">8</div>
+        <div class="section-title">tmux 설정</div>
+      </div>
+      <div class="code-block">
+        <div class="code-header">~/.tmux.conf</div>
+        <div class="code-body">cat > ~/.tmux.conf &lt;&lt; <span class="cs">'EOF'</span>
+set -g mouse on
+set -g pane-border-status top
+set -g pane-border-format <span class="cs">" #{pane_title} "</span>
+set -g default-terminal <span class="cs">"screen-256color"</span>
+bind | split-window -h -c <span class="cs">"#{pane_current_path}"</span>
+bind - split-window -v -c <span class="cs">"#{pane_current_path}"</span>
+EOF
+
+<span class="cv">tmux</span> source-file ~/.tmux.conf 2>/dev/null || true</div>
+      </div>
+
+      <h3>Wave 레이아웃</h3>
+      <div class="tmux-box">┌──────────────┬─────────────┬─────────────┐
+│  🔍 sq       │ 🔎 opensrch │ 📊 scorer   │
+│  (메인)      │─────────────│─────────────│
+│              │ 🔌 api      │ 📝 reporter │
+│              │─────────────│             │
+│              │ 🏃 runner   │             │
+└──────────────┴─────────────┴─────────────┘
+  Wave A 완료 후 Wave B 열림 (A 유지)
+  Wave B 완료 후 A+B 모두 닫힘 → 메인 복귀</div>
+    </div>
+
+    <!-- ── 9. 프로젝트별 설정 ── -->
+    <div class="section" id="s9">
+      <div class="section-header">
+        <div class="section-num">9</div>
+        <div class="section-title">프로젝트별 설정</div>
+      </div>
+      <div class="code-block">
+        <div class="code-header">.claude/settings.local.json</div>
+        <div class="code-body"><span class="cv">mkdir</span> -p .claude
+
+cat > .claude/settings.local.json &lt;&lt; <span class="cs">'EOF'</span>
+{
+  <span class="cn">"permissions"</span>: {
+    <span class="cn">"allow"</span>: [
+      <span class="cs">"Read(**)"</span>, <span class="cs">"Write(**)"</span>, <span class="cs">"Edit(**)"</span>,
+      <span class="cs">"Bash(git *)"</span>, <span class="cs">"Bash(gh *)"</span>, <span class="cs">"Bash(npm *)"</span>, <span class="cs">"Bash(npx *)"</span>,
+      <span class="cs">"Bash(node *)"</span>, <span class="cs">"Bash(tmux *)"</span>, <span class="cs">"Bash(ls *)"</span>
+    ],
+    <span class="cn">"deny"</span>: []
+  },
+  <span class="cn">"additionalDirectories"</span>: [<span class="cs">"/Users/YOUR_USERNAME/.claude"</span>]
+}
+EOF</div>
+      </div>
+      <div class="notice warn">
+        <div class="notice-icon">⚠️</div>
+        <div class="notice-text"><code>YOUR_USERNAME</code>을 실제 macOS 사용자명으로 변경하세요. 확인: <code>echo $HOME</code></div>
+      </div>
+    </div>
+
+    <!-- ── 10. 사용법 ── -->
+    <div class="section" id="s10">
+      <div class="section-header">
+        <div class="section-num">10</div>
+        <div class="section-title">사용법</div>
+      </div>
+
+      <h3>기본 실행</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># 1. 프로젝트로 이동</span>
+<span class="cv">cd</span> ~/development/danble/danble-frontend-web
+
+<span class="cm"># 2. tmux 세션 시작 (패널 분할을 위해 필수)</span>
+<span class="cv">tmux</span> new-session -s sq-work
+
+<span class="cm"># 3. sq 실행</span>
+<span class="cv">sq</span> <span class="cs">"검색 품질 개선 내용을 자연어로 설명"</span></div>
+      </div>
+
+      <h3>요청 유형별 자동 에이전트 선택</h3>
+      <table>
+        <thead>
+          <tr><th>요청 예시</th><th>선택 에이전트</th><th>Wave 구성</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>"OpenSearch 쿼리 가중치 조정"</code></td>
+            <td>🔎 opensearch + 📊 scorer + 📝 reporter</td>
+            <td>A: 1개 · B: 2개</td>
+          </tr>
+          <tr>
+            <td><code>"API 파라미터 수정 및 리포트"</code></td>
+            <td>🔌 api + 📝 reporter</td>
+            <td>A: 1개 · B: 1개</td>
+          </tr>
+          <tr>
+            <td><code>"키워드 300개 검색 품질 스모크 테스트"</code></td>
+            <td>🏃 runner + 📊 scorer + 📝 reporter</td>
+            <td>A: 1개 · B: 2개</td>
+          </tr>
+          <tr>
+            <td><code>"검색 0건 비율 개선 전체 분석"</code></td>
+            <td>🔎 opensearch + 🔌 api + 🏃 runner + 📊 scorer + 📝 reporter</td>
+            <td>A: 3개 · B: 2개</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Debate 2 초점 자동 결정</h3>
+      <table>
+        <thead>
+          <tr><th>에이전트 포함 여부</th><th>Debate 2 주제</th><th>REWORK 허용</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>scorer</code> 포함</td><td>검색 품질 점수 및 평가 결과 검토</td><td>✅</td></tr>
+          <tr><td><code>reporter</code> 포함</td><td>리포트 내용 및 품질 검토</td><td>✅</td></tr>
+          <tr><td>둘 다 없음</td><td>plan.md 기반 일반 검토</td><td>✅</td></tr>
+        </tbody>
+      </table>
+
+      <h3>실행 중 터미널 출력 예시</h3>
+      <div class="tmux-box">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔍 sq: "OpenSearch 검색 쿼리 가중치 조정 — 카테고리 매칭 정확도 향상"
+  🌿 브랜치: sq/opensearch-20260429-103942
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 Phase 1: 설계 검토 및 에이전트 선택...
+
+🗣️  토론: 설계 계획 검토
+  🔴 Round 1/2 — Red 공격 중...
+  🔵 Round 1/2 — Blue 방어 중...
+  ⚖️  판정: CONSENSUS
+
+🔍 Phase 3: 에이전트 2-웨이브 실행
+  ▶ Wave A (분석/실행) (2개) 시작...
+  ⏳ Wave A 완료: 2/2  (38s)
+  ✅ Wave A 완료
+  ✅ 커밋/푸시 완료          ← sq: ... — 분석
+  ▶ Wave B (평가/보고) (2개) 시작...
+  ✅ 커밋/푸시 완료          ← sq: ... — 평가
+
+🔍 Phase 4: 하네스 게이트
+  ✅ tsc · eslint · test · build 통과
+
+📦 Phase 6: 릴리스 매니저 실행 중...
+  ✅ PR 생성: https://github.com/.../pull/17</div>
+
+      <h3>tmux 단축키</h3>
+      <table>
+        <thead>
+          <tr><th>단축키</th><th>기능</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Ctrl+B 방향키</code></td><td>패널 이동</td></tr>
+          <tr><td><code>Ctrl+B z</code></td><td>현재 패널 전체화면 토글</td></tr>
+          <tr><td><code>Ctrl+B x</code></td><td>패널 닫기</td></tr>
+          <tr><td><code>Ctrl+B d</code></td><td>세션 나가기 (백그라운드 유지)</td></tr>
+          <tr><td><code>tmux attach -t sq-work</code></td><td>세션 다시 접속</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <hr class="divider">
+
+    <!-- ── 설치 순서 요약 ── -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-num" style="background:#059669;">✓</div>
+        <div class="section-title">전체 설치 순서 요약</div>
+      </div>
+      <div class="install-steps">
+        <div class="install-step">brew install tmux</div>
+        <div class="install-step">brew install gh &amp;&amp; gh auth login</div>
+        <div class="install-step">npm install -g @anthropic-ai/claude-code &amp;&amp; claude</div>
+        <div class="install-step">mkdir -p ~/.claude/agents ~/.claude/commands</div>
+        <div class="install-step">~/.claude/settings.json 생성</div>
+        <div class="install-step">~/.claude/CLAUDE.md 생성</div>
+        <div class="install-step">agents/*.md 5개 생성 (opensearch·api·runner·scorer·reporter)</div>
+        <div class="install-step">commands/sq.md 생성</div>
+        <div class="install-step highlight">git clone https://github.com/project-hh-com/tmux.git ~/development/tmux</div>
+        <div class="install-step highlight" style="background:#f0fdf4;border-color:#bbf7d0;">bash ~/development/tmux/sq/sq-setup &nbsp;&nbsp;<span style="color:#059669;font-weight:700;">← DB 환경 설정 (psql + 자격증명 + PATH)</span></div>
+        <div class="install-step">~/.tmux.conf 설정</div>
+        <div class="install-step">프로젝트별 .claude/settings.local.json 생성</div>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- ── 문제 해결 ── -->
+    <div class="section" id="s11">
+      <div class="section-header">
+        <div class="section-num" style="background:#6b7280;">?</div>
+        <div class="section-title">문제 해결</div>
+      </div>
+
+      <h3>sq: command not found</h3>
+      <div class="code-block">
+        <div class="code-body">export PATH="$HOME/.local/bin:$PATH"
+which sq</div>
+      </div>
+
+      <h3>permission denied: sq</h3>
+      <div class="code-block">
+        <div class="code-body">chmod +x ~/.local/bin/sq</div>
+      </div>
+
+      <h3>tmux 패널이 분할 안 됨</h3>
+      <div class="code-block">
+        <div class="code-body">echo $TMUX   <span class="cm"># 비어있으면 tmux 밖에서 실행 중</span>
+tmux new-session -s sq-work</div>
+      </div>
+
+      <h3>PR이 생성되지 않음</h3>
+      <div class="code-block">
+        <div class="code-body"><span class="cm"># gh 인증 확인</span>
+gh auth status
+
+<span class="cm"># 릴리스 매니저 로그 확인</span>
+cat .agent/sq-[타임스탬프]/release_manager.log</div>
+      </div>
+      <div class="notice info">
+        <div class="notice-icon">ℹ️</div>
+        <div class="notice-text">Phase 6은 게이트 실패 시에도 항상 실행됩니다. PR이 생성되지 않았다면 <code>release_manager.log</code>에서 원인을 확인하세요.</div>
+      </div>
+
+      <h3>에이전트가 항상 기본값으로 나옴</h3>
+      <div class="code-block">
+        <div class="code-body"><span class="cm"># agents.txt 확인</span>
+cat .agent/sq-[타임스탬프]/agents.txt
+
+<span class="cm"># architect 로그 확인</span>
+cat .agent/sq-[타임스탬프]/architect.log</div>
+      </div>
+
+      <h3>토론이 너무 오래 걸림</h3>
+      <p>Debate는 에이전트 3개(Red/Blue/Judge)가 순차 실행되므로 라운드당 시간이 걸려요. sq 파일에서 <code>run_debate</code> 함수의 <code>MAX_ROUNDS=2</code>를 <code>1</code>로 줄이면 빨라져요.</p>
+
+      <h3>토론 결과 확인</h3>
+      <div class="code-block">
+        <div class="code-body"><span class="cm"># 가장 최근 실행 로그 목록</span>
+ls -t .agent/ | head -1 | xargs -I{} ls .agent/{}
+
+<span class="cm"># 판정 결과만 보기</span>
+cat .agent/sq-[타임스탬프]/judge_plan_1.md
+cat .agent/sq-[타임스탬프]/judge_review_1.md</div>
+      </div>
+
+      <h3>sq 스크립트 업데이트</h3>
+      <div class="code-block">
+        <div class="code-body">cd ~/development/tmux && git pull</div>
+      </div>
+
+      <hr class="divider" style="margin: 24px 0;">
+
+      <h3>🗄️ DB 연결 실패</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># 자격증명 파일 존재 여부 확인</span>
+ls -la ~/.config/sq/db.env
+
+<span class="cm"># db.env 내용 확인 (비밀번호 마스킹)</span>
+cat ~/.config/sq/db.env | sed <span class="cs">'s/PGPASSWORD=.*/PGPASSWORD=***/'</span>
+
+<span class="cm"># VPN 연결 후 수동 테스트</span>
+source ~/.config/sq/db.env
+PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" --no-password -c "SELECT 1"
+
+<span class="cm"># 자격증명 재설정</span>
+rm ~/.config/sq/db.env && bash ~/development/tmux/sq/sq-setup</div>
+      </div>
+
+      <h3>psql: command not found</h3>
+      <div class="code-block">
+        <div class="code-body"><span class="cm"># Homebrew로 libpq 설치</span>
+brew install libpq
+
+<span class="cm"># PATH에 추가 (M1/M2 Mac)</span>
+echo <span class="cs">'export PATH="/opt/homebrew/opt/libpq/bin:$PATH"'</span> >> ~/.zshrc
+source ~/.zshrc</div>
+      </div>
+      <div class="notice info">
+        <div class="notice-icon">💡</div>
+        <div class="notice-text"><code>sq-setup</code>을 다시 실행하면 psql 설치와 PATH 설정을 자동으로 처리합니다.</div>
+      </div>
+
+      <h3>에이전트가 DB 없이 동작함</h3>
+      <div class="code-block">
+        <div class="code-body"><span class="cm"># DB 연결 확인 로그</span>
+cat .agent/sq-[타임스탬프]/db_check.log
+
+<span class="cm"># DB 없이도 에이전트는 정상 실행되지만 분석 품질이 저하됩니다</span>
+<span class="cm"># VPN 연결 후 sq-setup을 재실행하세요</span></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<footer class="site-footer">
+  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
+</footer>
+
+</body>
+</html>

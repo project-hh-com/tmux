@@ -1,0 +1,1115 @@
+#!/usr/bin/env bash
+# sq — Search Quality 워크플로 (동적 에이전트 선택)
+# 사용법: sq "검색 품질 개선 설명"
+
+set -euo pipefail
+
+FEATURE="${1:-}"
+if [[ -z "$FEATURE" ]]; then
+  echo "사용법: sq \"검색 품질 개선 설명\""
+  exit 1
+fi
+
+# ── PostgreSQL 접속 정보 — ~/.config/sq/db.env 에서 로드 ────
+# 자격증명은 로컬 파일에만 보관 (git 비추적).
+# 최초 설정: sq-setup 실행
+SQ_DB_ENV="${HOME}/.config/sq/db.env"
+if [[ -f "${SQ_DB_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  source "${SQ_DB_ENV}"
+else
+  echo "⚠️  DB 자격증명 파일이 없습니다: ${SQ_DB_ENV}"
+  echo "   sq-setup 을 먼저 실행해 환경을 설정하세요."
+  echo "   에이전트는 DB 없이 동작합니다."
+fi
+
+# 기본값 폴백 (db.env 가 없어도 스크립트가 중단되지 않도록)
+PGHOST="${PGHOST:-}"
+PGDATABASE="${PGDATABASE:-danble}"
+PGUSER="${PGUSER:-danble_read_only}"
+PGPASSWORD="${PGPASSWORD:-}"
+PGPORT="${PGPORT:-5432}"
+PGSSLMODE="${PGSSLMODE:-require}"
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+
+# psql 유틸리티 alias (에이전트 스크립트에서 그대로 복붙 가능)
+SQ_PSQL="psql -h ${PGHOST} -U ${PGUSER} -d ${PGDATABASE} -p ${PGPORT}"
+
+# 주요 검색 관련 테이블 목록 (에이전트 프롬프트에 삽입)
+# 런타임에 변수 확장 — 비밀번호는 스크립트 파일에 기록되지 않음
+DB_SCHEMA_CONTEXT=$(cat << 'DBSCHEMAEOF'
+## PostgreSQL DB 접근 (danble read-only replica)
+
+접속 명령어 (Bash 툴에서 직접 실행 가능):
+  PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" --no-password -c "SELECT ..."
+
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있습니다.
+
+### 주요 검색 관련 테이블
+
+| 테이블 | 주요 컬럼 | 설명 |
+|--------|---------|------|
+| `search_keywords` | id, keyword, keyword_type, category_main, rank, result_product_count, auto_score, md_score, normalized_keyword | 검색 키워드 마스터 |
+| `search_logs` | user_id, query, search_url, created_at | 사용자 검색 로그 |
+| `search_keyword_rankings` | result_product_count, result_style_count, recent_order_count, md_score, auto_score, rank | 키워드 랭킹 점수 |
+| `search_keyword_relations` | source_keyword_id, target_keyword_id, relation_type, relation_score | 키워드 간 연관관계 |
+| `search_brand_keywords` | brand_id, search_keyword_id | 브랜드-키워드 매핑 |
+| `search_category_keywords` | product_type, search_scope_product_type, requires_name_search, name_search_tokens, product_midtype_ids, product_subtype_ids | 카테고리-키워드 설정 |
+| `search_color_keywords` | variant_ids, search_keyword_id | 컬러-키워드 매핑 |
+| `product_display_keywords` | product_display_id, search_keyword_ids, matchup_keyword_ids, matchup_keywords, search_keywords | 상품 전시 키워드 |
+| `product_displays` | id, name, sale_status, is_sold_out, price, price_discount, brand_id, product_type | 상품 전시 정보 |
+| `matchup_keywords` | (matchup 키워드 원본) | 매치업 키워드 |
+| `matchup_keyword_relations` | (연관관계) | 매치업 키워드 연관 |
+
+### 쿼리 예시
+```sql
+-- 검색 결과 0건 키워드 조회
+SELECT keyword, rank, result_product_count, auto_score
+FROM search_keywords WHERE result_product_count = 0
+ORDER BY rank ASC LIMIT 20;
+
+-- 최근 7일 인기 검색어
+SELECT query, COUNT(*) AS cnt FROM search_logs
+WHERE created_at > NOW() - INTERVAL '7 days'
+GROUP BY query ORDER BY cnt DESC LIMIT 30;
+
+-- 키워드별 점수 현황
+SELECT sk.keyword, skr.result_product_count, skr.md_score, skr.auto_score, skr.rank
+FROM search_keywords sk
+JOIN search_keyword_rankings skr ON sk.id = skr.search_keyword_id
+ORDER BY skr.rank ASC LIMIT 50;
+```
+주의: SELECT만 가능 (read-only 접속). INSERT/UPDATE/DELETE 불가.
+DBSCHEMAEOF
+)
+
+# ── 토론 함수 (Red → Blue → Judge, 최대 2라운드) ────────────
+# 모든 대용량 파일은 경로만 전달 — 에이전트가 Read 툴로 직접 읽음
+run_debate() {
+  local TOPIC="$1"
+  local CONTEXT_FILE="$2"
+  local FOCUS="$3"          # plan | test | review
+  local ALLOW_REWORK="${4:-0}"  # 1이면 REWORK 판정 허용
+  local MAX_ROUNDS=2
+  local ROUND=0
+  local VERDICT="CONTINUE"
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  🗣️  토론: ${TOPIC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  while [[ $ROUND -lt $MAX_ROUNDS ]] && [[ "$VERDICT" != "CONSENSUS" ]]; do
+    ROUND=$((ROUND + 1))
+    echo ""
+    echo "  🔴 Round ${ROUND}/${MAX_ROUNDS} — Red 공격 중..."
+
+    cat > "${FLAG_DIR}/red_${FOCUS}_${ROUND}.txt" << REDEOF
+당신은 red 에이전트입니다. 아래 파일의 허점, 위험요소, 누락된 엣지케이스를 공격하세요.
+해결책 제시 금지. 문제 지적만 하세요.
+
+주제: ${TOPIC}
+원본 작업: ${FEATURE}
+
+검토 대상 파일 (Read 툴로 직접 읽으세요): ${CONTEXT_FILE}
+
+공격 내용을 ${FLAG_DIR}/red_${FOCUS}_${ROUND}.md 에 저장하세요.
+REDEOF
+    claude -p "$(cat "${FLAG_DIR}/red_${FOCUS}_${ROUND}.txt")" \
+      --allowedTools "Read,Write,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/red_${FOCUS}_${ROUND}.log"
+
+    echo "  🔵 Round ${ROUND}/${MAX_ROUNDS} — Blue 방어 중..."
+    cat > "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.txt" << BLUEEOF
+당신은 blue 에이전트입니다. Red의 공격을 검토하고 각 항목을 ACCEPT/MITIGATE/REJECT로 판정하세요.
+ACCEPT 또는 MITIGATE 항목은 실제로 파일을 수정해 반영하세요.
+
+주제: ${TOPIC}
+원본 작업: ${FEATURE}
+
+검토 대상 파일 (Read 툴로 읽으세요): ${CONTEXT_FILE}
+Red 공격 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/red_${FOCUS}_${ROUND}.md
+
+판정 및 수정 결과를 ${FLAG_DIR}/blue_${FOCUS}_${ROUND}.md 에 저장하세요.
+BLUEEOF
+    claude -p "$(cat "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.txt")" \
+      --allowedTools "Read,Write,Edit,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.log"
+
+    echo "  ⚖️  Round ${ROUND}/${MAX_ROUNDS} — Judge 판정 중..."
+    cat > "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.txt" << JUDGEEOF
+당신은 judge 에이전트입니다. Red/Blue 토론을 심판하세요.
+
+주제: ${TOPIC}
+라운드: ${ROUND}/${MAX_ROUNDS}
+
+Red 공격 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/red_${FOCUS}_${ROUND}.md
+Blue 방어 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/blue_${FOCUS}_${ROUND}.md
+
+판정 결과를 ${FLAG_DIR}/judge_${FOCUS}_${ROUND}.md 에 저장하고,
+첫 번째 줄에 반드시 다음 형식으로 작성하세요:
+VERDICT: CONSENSUS   (Blue가 충분히 방어/개선함 — 종료)
+VERDICT: CONTINUE    (사소한 문제 — 다음 라운드에서 Blue가 수정)
+$(if [[ "$ALLOW_REWORK" == "1" ]]; then echo "VERDICT: REWORK      (근본적 재구현 필요 — Wave 에이전트를 처음부터 다시 실행해야 함)"; fi)
+JUDGEEOF
+    claude -p "$(cat "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.txt")" \
+      --allowedTools "Read,Write,Edit" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.log"
+
+    VERDICT=$(grep "^VERDICT:" "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.md" 2>/dev/null | head -1 | awk '{print $2}')
+    VERDICT="${VERDICT:-CONTINUE}"
+    echo "  ⚖️  판정: ${VERDICT}"
+    # REWORK는 루프를 즉시 탈출 (다음 라운드 없이 Wave 재실행)
+    [[ "$VERDICT" == "REWORK" ]] && break
+  done
+
+  echo ""
+  case "$VERDICT" in
+    CONSENSUS) echo "  ✅ CONSENSUS — 다음 단계로 진행" ;;
+    REWORK)    echo "  🔄 REWORK — Wave 에이전트 재실행 필요" ;;
+    *)         echo "  ⚠️  ${MAX_ROUNDS}라운드 종료 — 최선의 결과로 진행" ;;
+  esac
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  # 최종 verdict를 파일로 저장 (호출부에서 REWORK 여부 확인용)
+  echo "$VERDICT" > "${FLAG_DIR}/debate_${FOCUS}_verdict.txt"
+}
+
+# ── 웨이브 대기 함수 ─────────────────────────────────────────
+# 형식: wait_wave <wave_file> <label>
+# wave_file 행 형식: AGENT_NAME|EMOJI|SCRIPT_PATH
+wait_wave() {
+  local WAVE_FILE="$1"
+  local WAVE_LABEL="$2"
+  local WAVE_COUNT=0
+  local WAIT_COUNT=0
+  local MAX_WAIT=600
+
+  [[ ! -s "$WAVE_FILE" ]] && return
+
+  while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+    WAVE_COUNT=$((WAVE_COUNT + 1))
+  done < "$WAVE_FILE"
+
+  while [[ $WAIT_COUNT -lt $MAX_WAIT ]]; do
+    local DONE_COUNT=0
+    while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+      [[ -f "${FLAG_DIR}/${AGENT_NAME}.done" ]] && DONE_COUNT=$((DONE_COUNT + 1)) || true
+    done < "$WAVE_FILE"
+    [[ $DONE_COUNT -ge $WAVE_COUNT ]] && break
+    printf "\r  ⏳ %s 완료: %d/%d  (%ds)   " "$WAVE_LABEL" "$DONE_COUNT" "$WAVE_COUNT" "$WAIT_COUNT"
+    sleep 5
+    WAIT_COUNT=$((WAIT_COUNT + 5))
+  done
+  echo ""
+}
+
+# ── 완료된 웨이브 패널/세션 정리 ─────────────────────────────
+# 전역 변수 사용: PANE_ID_FILE, FLAG_DIR, TMUX, MAIN_PANE
+cleanup_wave() {
+  # tmux 패널 정리
+  if [[ -n "${TMUX:-}" ]] && [[ -s "$PANE_ID_FILE" ]]; then
+    while IFS= read -r PANE_ID; do
+      tmux kill-pane -t "$PANE_ID" 2>/dev/null || true
+    done < "$PANE_ID_FILE"
+    > "$PANE_ID_FILE"
+    tmux select-pane -t "$MAIN_PANE" 2>/dev/null || true
+  fi
+  # 백그라운드 세션 정리
+  if [[ -f "${FLAG_DIR}/agent_sessions.txt" ]] && [[ -s "${FLAG_DIR}/agent_sessions.txt" ]]; then
+    while IFS= read -r SESSION; do
+      tmux kill-session -t "$SESSION" 2>/dev/null || true
+    done < "${FLAG_DIR}/agent_sessions.txt"
+    > "${FLAG_DIR}/agent_sessions.txt"
+  fi
+}
+
+# ── tmux 웨이브 실행 함수 ────────────────────────────────────
+# 레이아웃: [Plan] | [Wave A 에이전트 세로] | [Wave B 에이전트 세로]
+# - 각 웨이브는 이전 웨이브 오른쪽에 가로로 붙음
+# - 웨이브 내부는 세로로 분할
+# 전역 변수 사용: MAIN_WIN, MAIN_PANE, CWD, PANE_ID_FILE, LAST_WAVE_ANCHOR_PANE
+LAST_WAVE_ANCHOR_PANE=""
+
+launch_wave_tmux() {
+  local WAVE_FILE="$1"
+  local WAVE_LABEL="$2"
+  local WAVE_COUNT=0
+
+  [[ ! -s "$WAVE_FILE" ]] && return
+
+  while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+    WAVE_COUNT=$((WAVE_COUNT + 1))
+  done < "$WAVE_FILE"
+
+  echo "  ▶ ${WAVE_LABEL} (${WAVE_COUNT}개) 시작..."
+
+  local FIRST_AGENT_PANE=""
+  local FIRST=1
+
+  while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+    local NEW_PANE
+    if [[ $FIRST -eq 1 ]]; then
+      if [[ -z "$LAST_WAVE_ANCHOR_PANE" ]]; then
+        # 첫 웨이브: 메인 패널 오른쪽에 가로 분할
+        tmux split-window -h -t "$MAIN_WIN" -c "$CWD"
+      else
+        # 이후 웨이브: 이전 웨이브 첫 패널 오른쪽에 가로 분할 (새 컬럼)
+        tmux split-window -h -t "$LAST_WAVE_ANCHOR_PANE" -c "$CWD"
+      fi
+      NEW_PANE=$(tmux display-message -p '#{pane_id}')
+      FIRST_AGENT_PANE="$NEW_PANE"
+      FIRST=0
+    else
+      # 같은 웨이브 내: 첫 패널 기준 세로 분할
+      NEW_PANE=$(tmux split-window -v -t "$FIRST_AGENT_PANE" -c "$CWD" -P -F '#{pane_id}')
+    fi
+    echo "$NEW_PANE" >> "$PANE_ID_FILE"
+    tmux select-pane -t "$NEW_PANE" -T "${AGENT_EMOJI} ${AGENT_NAME}"
+    tmux send-keys -t "$NEW_PANE" "bash '${AGENT_SCRIPT}'" Enter
+  done < "$WAVE_FILE"
+
+  # 이 웨이브의 앵커 저장 → 다음 웨이브가 오른쪽에 붙을 기준점
+  LAST_WAVE_ANCHOR_PANE="$FIRST_AGENT_PANE"
+
+  # main-vertical: Plan 왼쪽, 나머지 오른쪽에 균등 세로 배치
+  tmux select-layout -t "$MAIN_WIN" main-vertical
+  tmux select-pane -t "$MAIN_PANE"
+}
+
+# ─────────────────────────────────────────────────────────────
+
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+FLAG_DIR=".agent/sq-${TIMESTAMP}"
+mkdir -p "$FLAG_DIR"
+
+# ── 브랜치 생성 ─────────────────────────────────────────────
+# Feature 설명에서 ASCII 영숫자만 추출해 슬러그로 사용
+BRANCH_SLUG=$(printf '%s' "$FEATURE" | LC_ALL=C tr -dc 'a-zA-Z0-9 ' | tr ' ' '-' | \
+              tr '[:upper:]' '[:lower:]' | sed 's/--*/-/g' | sed 's/^-\|-$//g' | cut -c1-40)
+[[ -z "$BRANCH_SLUG" ]] && BRANCH_SLUG="sq"
+BRANCH_NAME="sq/${BRANCH_SLUG}-${TIMESTAMP}"
+
+# 현재 브랜치 확인 — 보호 브랜치면 새 브랜치 생성, 아니면 현재 브랜치 사용
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [[ "$CURRENT_BRANCH" =~ ^(main|master|prd|develop)$ ]]; then
+  git checkout -b "$BRANCH_NAME" 2>&1 | tee -a "${FLAG_DIR}/git.log"
+  git push -u origin "$BRANCH_NAME" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
+  echo "  🌿 새 브랜치 생성: $BRANCH_NAME"
+else
+  BRANCH_NAME="$CURRENT_BRANCH"
+  echo "  🌿 현재 브랜치 사용: $BRANCH_NAME"
+fi
+
+# ── 중간 커밋/푸시 헬퍼 ─────────────────────────────────────
+# Architect가 생성한 commit_msg.txt 가 있으면 그 내용 사용.
+# 없으면 FEATURE 원문 사용.
+# 호출: auto_commit "sq" "분석" 또는 auto_commit "sq" "검증"
+auto_commit() {
+  local PREFIX="$1"
+  local PHASE="${2:-}"   # Wave 단계 (분석/검증 등), 없으면 생략
+  local CLEAN_MSG
+  if [[ -f "${FLAG_DIR}/commit_msg.txt" ]]; then
+    CLEAN_MSG=$(head -1 "${FLAG_DIR}/commit_msg.txt" | tr -d '\r\n')
+  else
+    CLEAN_MSG="$FEATURE"
+  fi
+  local FULL_MSG="${PREFIX}: ${CLEAN_MSG}"
+  [[ -n "$PHASE" ]] && FULL_MSG="${FULL_MSG} — ${PHASE}"
+  git add -A 2>/dev/null || true
+  if git diff --cached --quiet 2>/dev/null; then
+    echo "  ⏭️  변경사항 없음 — 커밋 스킵"
+    return 0
+  fi
+  git commit -m "${FULL_MSG}
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
+  git push origin "$BRANCH_NAME" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
+  echo "  ✅ 커밋/푸시 완료"
+}
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🔍 sq: \"$FEATURE\""
+echo "  🌿 브랜치: $BRANCH_NAME"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# ── DB 연결 테스트 + 사전 스냅샷 ────────────────────────────
+echo "🗄️  DB 연결 확인 중..."
+DB_AVAILABLE=false
+if command -v psql &> /dev/null; then
+  if PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" \
+      -p "${PGPORT}" --no-password -c "SELECT 1 AS ok" -t --connect-timeout=10 \
+      > "${FLAG_DIR}/db_check.log" 2>&1; then
+    echo "  ✅ DB 연결 성공 (danble read-only replica)"
+    DB_AVAILABLE=true
+  else
+    echo "  ⚠️  DB 연결 실패 — 에이전트는 DB 없이 동작합니다"
+    echo "     (상세: ${FLAG_DIR}/db_check.log)"
+  fi
+else
+  echo "  ⚠️  psql 미설치 — 'sq-setup' 스크립트로 환경을 먼저 설정하세요"
+fi
+
+# ── 사전 스냅샷 (Before) ─────────────────────────────────────
+take_snapshot() {
+  local LABEL="$1"        # before | after
+  local OUT_FILE="${FLAG_DIR}/snapshot_${LABEL}.md"
+
+  if [[ "$DB_AVAILABLE" != "true" ]]; then
+    echo "  ⏭️  DB 미연결 — 스냅샷 스킵"
+    return
+  fi
+
+  echo "  📸 검색 품질 스냅샷 (${LABEL})..."
+
+  PGPASSWORD="${PGPASSWORD}" psql \
+    -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" \
+    --no-password -t -A -F',' << SQLEOF > "${OUT_FILE}" 2>/dev/null || true
+-- 스냅샷 헤더
+SELECT '# 검색 품질 스냅샷 — ${LABEL} ($(date "+%Y-%m-%d %H:%M:%S"))';
+SELECT '';
+
+-- 1. 전체 키워드 현황
+SELECT '## 1. 전체 키워드 현황';
+SELECT '| 항목 | 값 |';
+SELECT '|------|-----|';
+SELECT '| 전체 키워드 수 | ' || COUNT(*) || ' |' FROM search_keywords WHERE is_deleted = false;
+SELECT '| 결과 0건 키워드 | ' || COUNT(*) || ' |' FROM search_keywords WHERE result_product_count = 0 AND is_deleted = false;
+SELECT '| 결과 0건 비율(%) | ' || ROUND(COUNT(*) * 100.0 / NULLIF((SELECT COUNT(*) FROM search_keywords WHERE is_deleted = false), 0), 2) || ' |' FROM search_keywords WHERE result_product_count = 0 AND is_deleted = false;
+SELECT '';
+
+-- 2. 점수 분포
+SELECT '## 2. 점수 분포 (auto_score / md_score)';
+SELECT '| 지표 | 평균 | 최솟값 | 최댓값 | 중앙값 |';
+SELECT '|------|------|--------|--------|--------|';
+SELECT '| auto_score | ' || ROUND(AVG(auto_score)::numeric,4) || ' | ' || MIN(auto_score) || ' | ' || MAX(auto_score) || ' | ' || ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY auto_score)::numeric,4) || ' |' FROM search_keywords WHERE is_deleted = false;
+SELECT '| md_score   | ' || ROUND(AVG(md_score)::numeric,4)   || ' | ' || MIN(md_score)   || ' | ' || MAX(md_score)   || ' | ' || ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY md_score)::numeric,4)   || ' |' FROM search_keywords WHERE is_deleted = false;
+SELECT '';
+
+-- 3. rank 분포 (상위 10개)
+SELECT '## 3. rank 상위 10개 키워드';
+SELECT '| rank | keyword | result_product_count | auto_score |';
+SELECT '|------|---------|----------------------|------------|';
+SELECT '| ' || rank || ' | ' || keyword || ' | ' || result_product_count || ' | ' || ROUND(auto_score::numeric,4) || ' |'
+FROM search_keywords WHERE is_deleted = false AND rank IS NOT NULL ORDER BY rank ASC LIMIT 10;
+SELECT '';
+
+-- 4. 카테고리별 0건 현황
+SELECT '## 4. 카테고리별 0건 키워드 수 (상위 10개)';
+SELECT '| category_main | 0건 키워드 수 | 전체 키워드 수 |';
+SELECT '|--------------|-------------|-------------|';
+SELECT '| ' || category_main || ' | ' || SUM(CASE WHEN result_product_count = 0 THEN 1 ELSE 0 END) || ' | ' || COUNT(*) || ' |'
+FROM search_keywords WHERE is_deleted = false
+GROUP BY category_main ORDER BY SUM(CASE WHEN result_product_count = 0 THEN 1 ELSE 0 END) DESC LIMIT 10;
+SQLEOF
+
+  echo "  ✅ 스냅샷 저장: ${OUT_FILE}"
+}
+
+take_snapshot "before"
+echo ""
+
+echo "📋 Phase 1: 설계 검토 및 에이전트 선택..."
+echo ""
+
+cat > "${FLAG_DIR}/architect_prompt.txt" << PROMPTEOF
+당신은 architect입니다. 요청: "${FEATURE}"
+
+이 작업은 danble 서비스의 OpenSearch 기반 키워드 검색 결과 정확도 개선에 관한 것입니다.
+
+## 현재 검색 품질 기준값 (작업 전 스냅샷)
+Read 툴로 읽어 현재 상태를 파악하고 계획에 반영하세요: ${FLAG_DIR}/snapshot_before.md
+(파일이 없으면 DB 미연결 상태이므로 스킵)
+
+${DB_SCHEMA_CONTEXT}
+
+세 가지를 수행하세요.
+
+[1] 구현/수정 계획을 ${FLAG_DIR}/plan.md 에 저장하세요. (무엇을 왜 어떻게, 위험요소와 방어책 포함)
+
+[2] 이 요청에 필요한 에이전트를 ${FLAG_DIR}/agents.txt 에 저장하세요.
+
+[3] 이 요청을 git 커밋 메시지용 한 줄 요약으로 ${FLAG_DIR}/commit_msg.txt 에 저장하세요.
+규칙:
+- URL(@https://... 등) 제외
+- 도구 지시사항("mcp사용해줘", "피그마 mcp" 등) 제외
+- 60자 이내
+- sq:/feat: 등 prefix 제외 (sq가 자동으로 붙임)
+- 어떤 검색어/쿼리/로직을 어떻게 바꿨는지 명확하게
+예시:
+  OpenSearch 검색 쿼리 가중치 조정 — 카테고리 매칭 정확도 향상
+  검색 품질 스모크 테스트 — 40~50대 남성 의류 300개 키워드
+  검색 결과 0건 비율 개선 — step 파라미터 및 limit 수정
+형식(파이프 구분): 에이전트이름|이 요청에서 맡을 구체적 역할
+예:
+opensearch|OpenSearch 쿼리 DSL 분석 및 스코어링 파라미터 최적화
+runner|자동 검색 실행 및 결과 데이터 수집 (배치 처리)
+
+선택 가능 에이전트:
+- opensearch : OpenSearch 쿼리 DSL 분석, 스코어링 파라미터(boost/weight) 조정, 인덱스 매핑 검토
+- api        : 검색 API 엔드포인트 파라미터 분석, 스크립트 수정, 응답 구조 파싱
+- runner     : 키워드 300개(웹서칭 150개 + DB 150개) 수집 후 자동 검색 실행 및 배치 데이터 수집
+               웹서칭 150개: 요청 주제와 관련된 실제 검색 트렌드 키워드를 웹 검색으로 수집
+               DB 150개: search_keywords 테이블에서 요청 목적에 맞게 조건 필터링해 추출
+                 예) 0건 개선 → result_product_count=0 우선 / 스모크 테스트 → rank 상위순 / 카테고리 → category_main 필터
+- scorer     : 품질 점수 산정, 등급 배분, 카테고리별 관련도 평가
+- reporter   : 검색 품질 리포트 생성 (MD/CSV), 스크린샷 수집, 결과 문서화
+
+판단 기준:
+- OpenSearch 쿼리/인덱스 변경 → opensearch 반드시 포함
+- API 파라미터/스크립트 수정 → api
+- 자동화 검색 실행/데이터 수집 → runner
+- 품질 점수 계산/집계 → scorer
+- 리포트/문서 생성 → reporter
+불필요한 에이전트는 포함하지 마세요.
+
+완료 후: touch ${FLAG_DIR}/architect.done
+PROMPTEOF
+
+claude -p "$(cat "${FLAG_DIR}/architect_prompt.txt")" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/architect.log"
+
+echo ""
+echo "✅ Phase 1 완료"
+
+if [[ -f "${FLAG_DIR}/plan.md" ]]; then
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📄 구현 계획: ${FLAG_DIR}/plan.md"
+  cat "${FLAG_DIR}/plan.md"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# ── Debate 1: 설계 계획 토론 ────────────────────────────────
+echo "🗣️  Debate 1: 설계 계획 검토 토론"
+run_debate "설계 계획 검토 — 허점/위험요소 발굴" "${FLAG_DIR}/plan.md" "plan"
+
+if [[ ! -f "${FLAG_DIR}/agents.txt" ]]; then
+  echo "⚠️  agents.txt 없음 — 기본값 사용"
+  printf 'opensearch|OpenSearch 쿼리 분석 및 최적화\nrunner|검색 실행 및 데이터 수집\nscorer|품질 점수 산정\nreporter|리포트 생성\n' > "${FLAG_DIR}/agents.txt"
+fi
+
+grep -v '^\s*$' "${FLAG_DIR}/agents.txt" > "${FLAG_DIR}/agents_clean.txt" || true
+mv "${FLAG_DIR}/agents_clean.txt" "${FLAG_DIR}/agents.txt"
+
+echo ""
+echo "📋 선택된 에이전트:"
+while IFS='|' read -r aname atask; do
+  echo "   • ${aname}: ${atask}"
+done < "${FLAG_DIR}/agents.txt"
+
+echo ""
+echo "⏩ 자동 승인 → Phase 3 시작"
+echo ""
+echo "🔍 Phase 3: 에이전트 2-웨이브 실행"
+echo "   Wave A (분석/실행): opensearch · api · runner"
+echo "   Wave B (평가/보고): scorer · reporter  ← Wave A 완료 후 시작"
+echo ""
+
+CWD=$(pwd)
+
+# ── 에이전트 스크립트 생성 + 웨이브 분류 ───────────────────
+> "${FLAG_DIR}/agents_wave_a.txt"   # 분석/실행: opensearch, api, runner
+> "${FLAG_DIR}/agents_wave_b.txt"   # 평가/보고: scorer, reporter
+
+IDX=0
+while IFS='|' read -r AGENT_NAME AGENT_TASK; do
+  DONE_FILE="${FLAG_DIR}/${AGENT_NAME}.done"
+  AGENT_SCRIPT="${FLAG_DIR}/run_${IDX}_${AGENT_NAME}.sh"
+
+  case "$AGENT_NAME" in
+    opensearch) ROLE="당신은 opensearch 에이전트입니다. OpenSearch 쿼리 DSL 분석, match/multi_match 파라미터 조정, boost/weight 최적화, 인덱스 매핑 및 analyzer 설정 검토. 검색 관련성 향상을 위한 쿼리 개선에 집중하세요.
+
+DB 활용: search_keywords 테이블의 auto_score/md_score 분포를 조회해 현재 스코어링 기준을 파악하고, result_product_count=0인 키워드를 확인해 검색 누락 원인을 분석하세요.
+${DB_SCHEMA_CONTEXT}" ;;
+    api)        ROLE="당신은 api 에이전트입니다. 검색 API 엔드포인트 파라미터 분석(step, search_source, limit 등), Node.js 스크립트 수정, API 응답 구조 파싱 로직 검증. 실제 API 호출 테스트로 응답 필드명을 확인하세요.
+
+DB 활용: search_logs 테이블에서 최근 검색 패턴과 실패 쿼리를 조회하고, search_keyword_rankings에서 현재 rank 분포를 확인하세요.
+${DB_SCHEMA_CONTEXT}" ;;
+    runner)     ROLE="당신은 runner 에이전트입니다. 총 300개 키워드로 자동 검색 실행 및 배치 데이터 수집.
+
+## 키워드 수집 전략 (반드시 준수)
+
+### 웹서칭 키워드 150개
+40~50대 한국 남성이 실제로 검색할 법한 의류 키워드를 WebSearch 툴로 수집하세요.
+타겟: 40대·50대 남성 / 카테고리: 상의·하의·아우터·정장·캐주얼·골프웨어 등
+검색 예시: '40대 남성 캐주얼 브랜드', '50대 남성 겨울 코트 추천', '중년 남성 골프웨어' 등
+단순 브랜드명이 아닌 실제 검색창에 입력할 법한 구체적 키워드로 수집 (예: "남성 면바지", "중년 가디건", "아버지 선물 점퍼").
+수집한 키워드를 ${FLAG_DIR}/keywords_web.txt 에 한 줄에 하나씩 저장.
+
+### DB 키워드 150개
+search_keywords 테이블에서 요청 목적에 맞게 조건을 정해 추출하세요:
+- 0건 비율 개선 요청 → result_product_count = 0 인 키워드 우선, rank 순 정렬
+- 스모크 테스트 요청  → rank 상위 150개
+- 특정 카테고리 요청  → category_main 필터링 후 rank 순
+- 기본               → rank 상위 150개
+추출한 키워드를 ${FLAG_DIR}/keywords_db.txt 에 저장.
+
+### 합산 및 중복 제거
+두 파일을 합쳐 중복 제거 후 최종 ${FLAG_DIR}/keywords_final.txt 생성 (최대 300개).
+중복 제거 후 300개 미만이면 부족분을 DB에서 추가 추출.
+
+### 검색 실행
+keywords_final.txt 기준으로 50개 단위 배치 처리.
+결과 즉시 JSON 저장(/tmp/search-quality/), 실패 키워드 별도 기록, 각 검색어 간 1~2초 딜레이 유지.
+
+${DB_SCHEMA_CONTEXT}" ;;
+    scorer)     ROLE="당신은 scorer 에이전트입니다. Wave A(분석/실행) 완료 후 수집된 데이터 기반으로 품질 점수 산정.
+
+## 100점 만점 평가 기준
+
+### 1. 결과 존재 여부 (20점)
+- 20점: 검색 결과 1건 이상
+- 0점 : 검색 결과 0건
+
+### 2. 이중 의도 커버리지 (25점) ★ 핵심
+검색어가 카테고리·브랜드 양쪽을 동시에 의미할 수 있는 경우 (예: '진스' → 진스 카테고리 바지 + 타미진스 브랜드)
+판단 방법: search_category_keywords, search_brand_keywords 테이블을 JOIN해 해당 키워드가 카테고리·브랜드 양쪽에 등록되어 있는지 확인.
+- 카테고리 의도 충족(12점): 키워드가 카테고리를 의미하는 경우 해당 카테고리 상품이 결과에 포함됨
+- 브랜드 의도 충족(13점): 키워드가 브랜드명을 포함하는 경우 해당 브랜드 상품이 결과에 포함됨
+- 둘 다 해당하는 키워드에서 한 쪽 의도가 완전히 누락되면 해당 항목 0점 처리
+- 카테고리·브랜드 중 하나에만 해당하는 키워드는 해당 항목 만점 처리
+
+### 3. 관련성 (15점)
+- 15점: 결과 상위 10개 중 80% 이상이 키워드와 직접 관련
+- 10점: 결과 상위 10개 중 60~79% 관련
+- 5점 : 결과 상위 10개 중 40~59% 관련
+- 0점 : 40% 미만
+
+### 4. 상위 노출 적절성 (10점)
+- 10점: 가장 관련성 높은 카테고리/브랜드 상품이 1~3위에 노출
+- 5점 : 4~10위 내 노출
+- 0점 : 10위 밖이거나 미노출
+
+### 5. 가격대 적절성 (15점)
+product_displays의 price/price_discount 기준으로 검색어의 예상 가격대와 실제 결과 상품 가격대 비교.
+- 15점: 예상 가격대와 일치하는 상품이 60% 이상
+- 8점 : 40~59% 일치
+- 0점 : 40% 미만
+
+### 6. 다양성 (15점)
+- 브랜드 다양성(8점): 상위 10개 결과에 3개 이상의 브랜드 포함
+- 스타일 다양성(7점): 동일 키워드 내 색상·디자인 등 다양한 스타일 포함
+
+## 등급 기준
+- A: 90~100점 / B: 75~89점 / C: 60~74점 / D: 45~59점 / F: 44점 이하
+
+## 이중 의도 키워드 판별 쿼리 (참고)
+search_category_keywords 와 search_brand_keywords 를 각각 조회해
+동일 search_keyword_id가 양쪽에 모두 존재하면 이중 의도 키워드로 분류.
+matchup_keywords 테이블도 확인해 브랜드 연관 매치업 키워드 여부를 추가 검증.
+
+DB 활용: product_displays 테이블로 실제 상품의 sale_status, price, brand_id를 조회해 점수 산정에 활용하고, product_display_keywords로 키워드-상품 매핑 정확도를 검증하세요.
+${DB_SCHEMA_CONTEXT}" ;;
+    reporter)   ROLE="당신은 reporter 에이전트입니다. Wave A(분석/실행) 완료 후 검색 품질 리포트 생성. docs/search-quality/ 디렉토리에 search-quality-report.md(요약), search-quality-detail.csv(전체 상세), search-quality-detail.md(상위/하위 각 30개) 생성. 하위 20개 + 0건 샘플 10개 스크린샷 수집.
+
+## 작업 전/후 개선 수치 비교 (리포트 필수 포함)
+Read 툴로 두 스냅샷 파일을 읽어 개선 전/후 수치를 비교한 섹션을 리포트 상단에 추가하세요:
+- 작업 전: ${FLAG_DIR}/snapshot_before.md
+- 작업 후: ${FLAG_DIR}/snapshot_after.md
+비교 항목: 0건 키워드 수·비율 변화, 평균 auto_score/md_score 변화, 카테고리별 개선 현황
+(파일이 없으면 해당 섹션 생략)
+
+DB 활용: search_keyword_relations에서 연관 키워드 커버리지를 확인하고, 리포트에 DB 기준 키워드별 기대 상품수(result_product_count)와 실제 검색 결과 수를 비교해 포함하세요.
+${DB_SCHEMA_CONTEXT}" ;;
+    *)          ROLE="당신은 ${AGENT_NAME} 에이전트입니다." ;;
+  esac
+
+  case "$AGENT_NAME" in
+    opensearch) EMOJI="🔎" ;;
+    api)        EMOJI="🔌" ;;
+    runner)     EMOJI="🏃" ;;
+    scorer)     EMOJI="📊" ;;
+    reporter)   EMOJI="📝" ;;
+    *)          EMOJI="🔧" ;;
+  esac
+
+  # 프롬프트는 파일 경로 참조만 포함 — 내용 임베드 금지
+  cat > "${FLAG_DIR}/prompt_${IDX}.txt" << AGENTPROMPT
+${ROLE}
+
+맡은 역할: ${AGENT_TASK}
+
+전체 계획 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/plan.md
+
+작업 완료 후 반드시 실행: touch ${DONE_FILE}
+AGENTPROMPT
+
+  cat > "$AGENT_SCRIPT" << SCRIPTEOF
+#!/usr/bin/env bash
+cd "${CWD}"
+echo "${EMOJI} ${AGENT_NAME} 에이전트 시작..."
+claude -p "\$(cat '${FLAG_DIR}/prompt_${IDX}.txt')" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions
+SCRIPTEOF
+  chmod +x "$AGENT_SCRIPT"
+
+  # 웨이브 분류 (형식: NAME|EMOJI|SCRIPT_PATH)
+  case "$AGENT_NAME" in
+    opensearch|api|runner)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_a.txt" ;;
+    scorer|reporter)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_b.txt" ;;
+    *)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_a.txt" ;;
+  esac
+
+  IDX=$((IDX + 1))
+done < "${FLAG_DIR}/agents.txt"
+
+PANE_ID_FILE="${FLAG_DIR}/agent_panes.txt"
+> "$PANE_ID_FILE"
+
+# ── Debate 2 포커스 결정 ─────────────────────────────────────
+DEBATE2_TOPIC="분석 결과 검토"
+DEBATE2_FILE="${FLAG_DIR}/plan.md"
+DEBATE2_FOCUS="review"
+if grep -q "^scorer|" "${FLAG_DIR}/agents.txt" 2>/dev/null; then
+  DEBATE2_FOCUS="test"
+  DEBATE2_TOPIC="검색 품질 점수 및 평가 결과 검토"
+elif grep -q "^reporter|" "${FLAG_DIR}/agents.txt" 2>/dev/null; then
+  DEBATE2_FOCUS="review"
+  DEBATE2_TOPIC="리포트 내용 및 품질 검토"
+fi
+
+# ── Wave + Debate 2 루프 (REWORK 시 재실행) ─────────────────
+REWORK_COUNT=0
+
+if [[ -n "${TMUX:-}" ]]; then
+  MAIN_PANE=$(tmux display-message -p '#{pane_id}')
+  MAIN_WIN=$(tmux display-message -p '#{window_id}')
+  WIN="$MAIN_WIN"
+fi
+
+while true; do
+  if [[ $REWORK_COUNT -gt 0 ]]; then
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  🔄 REWORK Round ${REWORK_COUNT}/${MAX_REWORK} — Wave 재실행"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    # done 파일 초기화
+    while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+      rm -f "${FLAG_DIR}/${AGENT_NAME}.done"
+    done < "${FLAG_DIR}/agents_wave_a.txt"
+    while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+      rm -f "${FLAG_DIR}/${AGENT_NAME}.done"
+    done < "${FLAG_DIR}/agents_wave_b.txt"
+    > "$PANE_ID_FILE"
+    LAST_WAVE_ANCHOR_PANE=""   # REWORK 시 레이아웃 앵커 초기화
+  fi
+
+  # ── 웨이브 실행 ────────────────────────────────────────────
+  if [[ -n "${TMUX:-}" ]]; then
+    launch_wave_tmux "${FLAG_DIR}/agents_wave_a.txt" "Wave A (분석/실행)"
+    wait_wave "${FLAG_DIR}/agents_wave_a.txt" "Wave A"
+    # Wave A 패널은 Wave B가 시작될 때까지 유지 (cleanup 하지 않음)
+    echo "  ✅ Wave A 완료"
+    auto_commit "sq" "분석"
+
+    if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  ✅ Wave A 완료 → Wave B (평가/보고) 시작"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      launch_wave_tmux "${FLAG_DIR}/agents_wave_b.txt" "Wave B (평가/보고)"
+      wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
+      cleanup_wave    # A + B 모두 정리
+      echo "  🧹 Wave A+B 패널 정리 완료"
+      auto_commit "sq" "평가"
+      take_snapshot "after"
+    else
+      cleanup_wave    # Wave B 없으면 A만 정리
+      echo "  🧹 Wave A 패널 정리 완료"
+      take_snapshot "after"
+    fi
+
+  else
+    SESSION_LIST_FILE="${FLAG_DIR}/agent_sessions.txt"
+    > "$SESSION_LIST_FILE"
+
+    echo "  ▶ Wave A (분석/실행) 시작..."
+    while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+      SESSION="sq-${AGENT_NAME}"
+      tmux kill-session -t "$SESSION" 2>/dev/null || true
+      tmux new-session -d -s "$SESSION" -c "$CWD"
+      tmux send-keys -t "$SESSION" "bash '${AGENT_SCRIPT}'" Enter
+      echo "$SESSION" >> "$SESSION_LIST_FILE"
+      echo "  tmux attach -t ${SESSION}"
+    done < "${FLAG_DIR}/agents_wave_a.txt"
+    wait_wave "${FLAG_DIR}/agents_wave_a.txt" "Wave A"
+    cleanup_wave
+    auto_commit "sq" "분석"
+
+    if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  ✅ Wave A 완료 → Wave B (평가/보고) 시작"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      echo "  ▶ Wave B (평가/보고) 시작..."
+      while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+        SESSION="sq-${AGENT_NAME}"
+        tmux kill-session -t "$SESSION" 2>/dev/null || true
+        tmux new-session -d -s "$SESSION" -c "$CWD"
+        tmux send-keys -t "$SESSION" "bash '${AGENT_SCRIPT}'" Enter
+        echo "$SESSION" >> "$SESSION_LIST_FILE"
+        echo "  tmux attach -t ${SESSION}"
+      done < "${FLAG_DIR}/agents_wave_b.txt"
+      wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
+      cleanup_wave
+      auto_commit "sq" "평가"
+      take_snapshot "after"
+    else
+      take_snapshot "after"
+    fi
+  fi
+
+  echo ""
+  echo ""
+
+  # ── Debate 2: 분석 결과 토론 (REWORK 판정 허용) ─────────────
+  echo "🗣️  Debate 2: ${DEBATE2_TOPIC}"
+  if [[ "$DEBATE2_FOCUS" == "test" ]] && [[ -f "${FLAG_DIR}/scorer.log" ]]; then
+    DEBATE2_FILE="${FLAG_DIR}/scorer.log"
+  fi
+  run_debate "${DEBATE2_TOPIC}" "${DEBATE2_FILE}" "${DEBATE2_FOCUS}" "1"
+
+  # REWORK 판정이면 Wave 재실행, 아니면 탈출
+  DEBATE2_VERDICT=$(cat "${FLAG_DIR}/debate_${DEBATE2_FOCUS}_verdict.txt" 2>/dev/null || echo "CONSENSUS")
+  [[ "$DEBATE2_VERDICT" != "REWORK" ]] && break
+
+  REWORK_COUNT=$((REWORK_COUNT + 1))
+  echo "  (누적 REWORK: ${REWORK_COUNT}회)"
+done
+
+
+echo "🔬 Phase 3.5: 사이드 이펙트 영향도 분석"
+echo ""
+
+# Wave A/B에서 변경된 파일 목록 수집
+CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || true)
+CHANGED_FILES_STAGED=$(git diff --cached --name-only 2>/dev/null || true)
+ALL_CHANGED="${CHANGED_FILES}${CHANGED_FILES_STAGED}"
+
+cat > "${FLAG_DIR}/impact_prompt.txt" << IMPACTEOF
+당신은 사이드 이펙트 분석 에이전트입니다.
+Phase 3 에이전트들이 수정한 코드가 기존 검색 기능에 미칠 수 있는 영향도와 범위를 예측하세요.
+
+원래 작업: ${FEATURE}
+전체 계획 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/plan.md
+
+## 작업 전/후 검색 품질 스냅샷 비교
+아래 두 파일을 Read 툴로 읽어 수치 변화를 분석하고 개선 효과를 정량화하세요.
+- 작업 전: ${FLAG_DIR}/snapshot_before.md
+- 작업 후: ${FLAG_DIR}/snapshot_after.md
+(파일이 없으면 DB 미연결 상태이므로 스킵)
+
+비교 항목: 0건 키워드 수/비율, auto_score/md_score 평균, rank 상위 키워드 변화
+
+## Phase 3에서 변경된 파일 목록
+$(git diff --name-only HEAD 2>/dev/null | head -50 || echo "(변경 감지 불가 — git diff 직접 확인 필요)")
+
+## 분석 지침
+
+### 1. 변경 파일 분류
+각 변경 파일을 Read 툴로 직접 읽어 다음으로 분류하세요:
+- 🔍 검색 쿼리/파라미터 변경 (OpenSearch DSL, API 파라미터)
+- 📦 데이터 파싱/변환 변경 (응답 구조 파싱, 필드 매핑)
+- 🏃 실행 스크립트 변경 (배치 처리, 저장 로직)
+- 📊 점수/리포트 로직 변경 (평가 기준, 출력 형식)
+
+### 2. 영향 범위 예측
+각 변경에 대해 다음 영역의 영향 여부를 판단하세요:
+- **기존 검색 결과**: 현재 서비스 중인 검색에 변화가 생기는가?
+- **다른 검색 유형**: 키워드 검색 외 다른 검색(카테고리/브랜드/필터 등)에 영향이 있는가?
+- **성능/응답시간**: API 호출 패턴 변화로 인한 부하 증가 가능성은?
+- **데이터 정합성**: 기존에 수집된 리포트/로그와 호환성은?
+- **연관 컴포넌트**: 변경된 모듈을 import하는 다른 파일에 영향이 있는가?
+
+### 3. 위험도 평가
+각 변경사항의 위험도를 다음 기준으로 평가하세요:
+- 🔴 HIGH: 서비스 중인 검색 결과에 즉각적 영향, 즉시 롤백 필요 가능성
+- 🟡 MEDIUM: 일부 검색어/케이스에만 영향, 모니터링 필요
+- 🟢 LOW: 오프라인 분석/리포트에만 영향, 서비스 무관
+
+### 4. 검증 권고사항
+위험도 HIGH/MEDIUM 항목에 대해 CI 게이트 외 추가로 수동 확인이 필요한 항목을 제시하세요:
+- 특정 검색어로 실제 API 호출 테스트
+- 변경 전후 검색 결과 비교
+- 성능 지표(응답시간, TPS) 확인 방법
+
+분석 결과를 ${FLAG_DIR}/impact_analysis.md 에 저장하세요.
+형식:
+# 사이드 이펙트 영향도 분석
+
+## 요약
+- 전체 위험도: 🔴/🟡/🟢
+- 서비스 영향 여부: 있음/없음
+
+## 변경 파일별 분석
+| 파일 | 변경 유형 | 영향 범위 | 위험도 |
+|------|---------|---------|------|
+
+## 위험 항목 상세
+(HIGH/MEDIUM 항목만)
+
+## 추가 검증 권고사항
+
+IMPACTEOF
+
+claude -p "$(cat "${FLAG_DIR}/impact_prompt.txt")" \
+  --allowedTools "Read,Write,Glob,Grep,Bash" --dangerously-skip-permissions \
+  2>&1 | tee "${FLAG_DIR}/impact_analysis.log"
+
+echo ""
+if [[ -f "${FLAG_DIR}/impact_analysis.md" ]]; then
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📋 영향도 분석 결과: ${FLAG_DIR}/impact_analysis.md"
+  cat "${FLAG_DIR}/impact_analysis.md"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+  echo "  ℹ️  분석 로그: ${FLAG_DIR}/impact_analysis.log"
+fi
+echo ""
+
+echo "🔍 Phase 4: 하네스 게이트"
+echo ""
+GATE_PASS=true
+
+echo "  1/4 타입 검사..."
+if npx tsc --noEmit 2>&1 | tee "${FLAG_DIR}/tsc.log" | grep -q "error TS"; then
+  echo "  ❌ tsc 실패"; GATE_PASS=false
+else
+  echo "  ✅ tsc 통과"
+fi
+
+echo "  2/4 린트..."
+if npx eslint . --max-warnings 0 2>&1 | tee "${FLAG_DIR}/eslint.log"; then
+  echo "  ✅ eslint 통과"
+else
+  echo "  ❌ eslint 실패"; GATE_PASS=false
+fi
+
+echo "  3/4 테스트..."
+if npm test -- --passWithNoTests 2>&1 | tee "${FLAG_DIR}/test.log"; then
+  echo "  ✅ 테스트 통과"
+else
+  echo "  ❌ 테스트 실패"; GATE_PASS=false
+fi
+
+echo "  4/4 빌드..."
+if npm run build 2>&1 | tee "${FLAG_DIR}/build.log"; then
+  echo "  ✅ 빌드 통과"
+else
+  echo "  ❌ 빌드 실패"; GATE_PASS=false
+fi
+
+# ── Phase 5: 자동 수정 루프 ─────────────────────────────────
+# 로그 내용은 임베드 금지 — 파일 경로만 전달, 에이전트가 Read 툴로 읽음
+MAX_FIX_ROUNDS=3
+FIX_ROUND=0
+
+while ! $GATE_PASS && [[ $FIX_ROUND -lt $MAX_FIX_ROUNDS ]]; do
+  FIX_ROUND=$((FIX_ROUND + 1))
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "🔄 Phase 5: 자동 수정 Round ${FIX_ROUND}/${MAX_FIX_ROUNDS}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  # 실패 항목 목록만 수집 (내용 임베드 X)
+  FAIL_LIST=""
+  if grep -q "error TS" "${FLAG_DIR}/tsc.log" 2>/dev/null; then
+    FAIL_LIST="${FAIL_LIST}
+- TSC 타입 오류 → ${FLAG_DIR}/tsc.log"
+  fi
+  if ! npx eslint . --max-warnings 0 > /dev/null 2>&1; then
+    FAIL_LIST="${FAIL_LIST}
+- ESLint 오류 → ${FLAG_DIR}/eslint.log"
+  fi
+  if grep -qE "FAIL|● " "${FLAG_DIR}/test.log" 2>/dev/null; then
+    FAIL_LIST="${FAIL_LIST}
+- 테스트 실패 → ${FLAG_DIR}/test.log"
+  fi
+  if grep -qiE "error|failed" "${FLAG_DIR}/build.log" 2>/dev/null; then
+    FAIL_LIST="${FAIL_LIST}
+- 빌드 오류 → ${FLAG_DIR}/build.log"
+  fi
+
+  cat > "${FLAG_DIR}/fix_prompt_${FIX_ROUND}.txt" << FIXEOF
+당신은 자동 수정 에이전트입니다.
+CI 게이트 실패를 분석하고 코드를 직접 수정하세요.
+
+원래 작업: ${FEATURE}
+
+실패한 게이트 (각 로그 파일을 Read 툴로 직접 읽어 분석하세요):
+${FAIL_LIST}
+
+수정 지침:
+- 로그 파일을 Read 툴로 열어 오류 내용을 확인하세요
+- TypeScript 타입 오류는 any 대신 정확한 타입으로 해결하세요
+- ESLint 오류는 코드 로직을 바꾸지 말고 스타일만 수정하세요
+- 테스트 실패는 테스트 코드보다 구현 코드를 먼저 확인하세요
+FIXEOF
+
+  claude -p "$(cat "${FLAG_DIR}/fix_prompt_${FIX_ROUND}.txt")" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/fix_${FIX_ROUND}.log"
+  touch "${FLAG_DIR}/fix_${FIX_ROUND}.done"
+  auto_commit "fix"
+
+  echo ""
+  echo "🔍 게이트 재검사 (Round ${FIX_ROUND})..."
+  GATE_PASS=true
+
+  echo "  1/4 타입 검사..."
+  if npx tsc --noEmit 2>&1 | tee "${FLAG_DIR}/tsc.log" | grep -q "error TS"; then
+    echo "  ❌ tsc 실패"; GATE_PASS=false
+  else
+    echo "  ✅ tsc 통과"
+  fi
+
+  echo "  2/4 린트..."
+  if npx eslint . --max-warnings 0 2>&1 | tee "${FLAG_DIR}/eslint.log"; then
+    echo "  ✅ eslint 통과"
+  else
+    echo "  ❌ eslint 실패"; GATE_PASS=false
+  fi
+
+  echo "  3/4 테스트..."
+  if npm test -- --passWithNoTests 2>&1 | tee "${FLAG_DIR}/test.log"; then
+    echo "  ✅ 테스트 통과"
+  else
+    echo "  ❌ 테스트 실패"; GATE_PASS=false
+  fi
+
+  echo "  4/4 빌드..."
+  if npm run build 2>&1 | tee "${FLAG_DIR}/build.log"; then
+    echo "  ✅ 빌드 통과"
+  else
+    echo "  ❌ 빌드 실패"; GATE_PASS=false
+  fi
+done
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if $GATE_PASS; then
+  echo "  🎉 모든 게이트 통과!"
+else
+  echo "  ⚠️  ${MAX_FIX_ROUNDS}회 자동 수정 후에도 게이트 실패"
+  echo "  로그: ${FLAG_DIR}/"
+  echo "  (게이트 실패 상태로 PR을 Draft 생성합니다)"
+fi
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# ── Phase 6: 릴리스 매니저 — 최종 커밋/푸시/PR 생성 ────────
+# 게이트 통과 여부와 무관하게 항상 실행
+# release-manager 정책:
+#   - prd/main/master 베이스 금지
+#   - 라벨 "Search Quality" 필수
+#   - 게이트 실패 시 Draft PR 생성
+
+# 에이전트 리포트 파일 목록 (존재하는 것만)
+REPORT_FILES=""
+[[ -f "${FLAG_DIR}/plan.md" ]]         && REPORT_FILES="${REPORT_FILES}\n- 설계 계획: ${FLAG_DIR}/plan.md"
+[[ -f "${FLAG_DIR}/opensearch.log" ]]  && REPORT_FILES="${REPORT_FILES}\n- OpenSearch 분석: ${FLAG_DIR}/opensearch.log"
+[[ -f "${FLAG_DIR}/api.log" ]]         && REPORT_FILES="${REPORT_FILES}\n- API 분석: ${FLAG_DIR}/api.log"
+[[ -f "${FLAG_DIR}/runner.log" ]]      && REPORT_FILES="${REPORT_FILES}\n- 검색 실행 결과: ${FLAG_DIR}/runner.log"
+[[ -f "${FLAG_DIR}/scorer.log" ]]      && REPORT_FILES="${REPORT_FILES}\n- 품질 점수: ${FLAG_DIR}/scorer.log"
+[[ -f "${FLAG_DIR}/reporter.log" ]]    && REPORT_FILES="${REPORT_FILES}\n- 리포트 생성: ${FLAG_DIR}/reporter.log"
+
+GATE_STATUS="통과"
+$GATE_PASS || GATE_STATUS="실패 (Draft PR 생성)"
+
+# commit_msg.txt 가 있으면 PR 제목으로 사용, 없으면 FEATURE 원문
+COMMIT_SUMMARY=$(head -1 "${FLAG_DIR}/commit_msg.txt" 2>/dev/null | tr -d '\r\n' || echo "$FEATURE")
+
+cat > "${FLAG_DIR}/release_manager_prompt.txt" << RMEOF
+당신은 release-manager 에이전트입니다.
+모든 분석/실행/평가 리포트를 통합해 최종 커밋·푸시·PR 생성을 마무리합니다.
+
+## 작업 내용
+원래 요청: ${FEATURE}
+커밋/PR 제목용 요약: ${COMMIT_SUMMARY}
+작업 브랜치: ${BRANCH_NAME}
+CI 게이트 상태: ${GATE_STATUS}
+
+## 에이전트 산출물 파일 (Read 툴로 직접 읽으세요)
+$(printf "%b" "${REPORT_FILES}")
+
+## 수행 절차
+
+### Step 1. 상태 확인
+git status
+git log --oneline -5
+
+### Step 2. 미커밋 변경 처리 (있을 경우)
+git add -A 후 아래 형식으로 커밋:
+  git commit -m "sq: ${COMMIT_SUMMARY}
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+
+커밋할 변경사항이 없으면 스킵.
+
+### Step 3. 푸시
+git push origin ${BRANCH_NAME}
+
+### Step 4. PR 생성 또는 업데이트
+기존 PR 확인:
+  gh pr view --json url,number,baseRefName 2>/dev/null
+
+기존 PR 없으면 신규 생성:
+  - 베이스 브랜치: main
+  - **prd/master 를 베이스로 절대 지정하지 마세요 — 해당 상황 발생 시 즉시 중단하고 결과 파일에 사유 기록**
+  - 반드시 --label "Search Quality" 포함
+  - CI 게이트 실패 상태면 --draft 플래그 추가
+  - PR 제목: sq: ${COMMIT_SUMMARY}
+  - PR 본문 구성:
+    ## 요청
+    ${FEATURE}
+    ## Summary
+    (plan.md 요약 — Read 툴로 읽어서 2-3줄로 요약)
+    ## 에이전트 리포트
+    (각 리포트 파일 핵심 내용 요약)
+    ## CI 게이트
+    상태: ${GATE_STATUS}
+    ## Test plan
+    - [ ] 검색 결과 정확도 개선 확인
+    - [ ] 타입 에러 없음
+    - [ ] 테스트 통과
+    - [ ] 빌드 성공
+    🤖 Generated with Claude Agent SQ (Search Quality)
+
+기존 PR 있으면:
+  gh pr edit --body "..." --add-label "Search Quality"
+  (Draft 해제는 CI 통과 후 수동으로)
+
+### Step 5. 결과 보고
+${FLAG_DIR}/release_report.md 에 저장:
+  # Release Report
+  ## 브랜치: ${BRANCH_NAME}
+  ## 커밋: (sha 목록)
+  ## PR URL: https://github.com/.../pull/N
+  ## 상태: 신규 생성 / 본문 업데이트 / Draft
+
+## 금지 사항
+- prd / master 를 베이스로 PR 생성 금지
+- git push --force 금지
+- .env* 파일 커밋 금지
+- pre-commit 훅 우회(--no-verify) 금지
+- 사용자에게 질문하지 마세요
+RMEOF
+
+echo "📦 Phase 6: 릴리스 매니저 실행 중..."
+echo ""
+claude -p "$(cat "${FLAG_DIR}/release_manager_prompt.txt")" \
+  --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions \
+  2>&1 | tee "${FLAG_DIR}/release_manager.log"
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [[ -f "${FLAG_DIR}/release_report.md" ]]; then
+  cat "${FLAG_DIR}/release_report.md"
+else
+  echo "  ℹ️  상세 로그: ${FLAG_DIR}/release_manager.log"
+fi
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

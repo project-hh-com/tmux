@@ -1,0 +1,13 @@
+# 자격증명 / 시크릿
+*.env
+*.env.*
+.env
+db.env
+**/db.env
+**/.secrets
+
+# 에이전트 실행 로그 (로컬 임시 파일)
+.agent/
+
+# macOS
+.DS_Store

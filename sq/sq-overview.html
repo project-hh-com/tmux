@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sq — Search Quality 워크플로</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --accent: #0891b2;
+    --header-h: 96px;
+  }
+
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── 공통 헤더 ── */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #fff;
+    box-shadow: 0 1px 0 var(--border);
+  }
+  .top-nav {
+    padding: 0 48px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .nav-left { display: flex; align-items: center; gap: 4px; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
+  .nav-logo span { color: #0891b2; }
+  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
+  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
+  .nav-link.active { background: #ecfeff; color: var(--accent); }
+  .nav-badge { font-size: 11px; font-weight: 600; background: #ecfeff; color: #0891b2; padding: 3px 10px; border-radius: 20px; }
+  .breadcrumb {
+    padding: 9px 48px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
+  .breadcrumb a:hover { color: var(--accent); }
+  .bc-sep { color: #d1d5db; margin: 0 2px; }
+  .bc-current { color: var(--text-primary); font-weight: 500; }
+
+  /* ── 페이지 컨테이너 ── */
+  .page {
+    max-width: 1008px;
+    margin: 0 auto;
+    padding: 32px 48px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    flex: 1;
+    width: 100%;
+  }
+
+  /* ── 푸터 ── */
+  .site-footer {
+    text-align: center;
+    padding: 28px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    background: #fff;
+    margin-top: auto;
+  }
+  .site-footer a { color: #0891b2; text-decoration: none; }
+  .site-footer a:hover { text-decoration: underline; }
+
+  /* ── 헤더 ── */
+  .header {
+    background: #fff;
+    border-radius: 16px;
+    padding: 36px 40px;
+    border: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .header-icon {
+    font-size: 48px;
+    line-height: 1;
+  }
+  .header-text h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #111827;
+  }
+  .header-text p {
+    margin-top: 6px;
+    font-size: 15px;
+    color: #6b7280;
+    font-weight: 400;
+  }
+  .badge {
+    display: inline-block;
+    background: #ecfeff;
+    color: #0891b2;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-top: 10px;
+  }
+
+  /* ── 카드 공통 ── */
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    padding: 28px 32px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #9ca3af;
+    margin-bottom: 20px;
+  }
+
+  /* ── 2열 그리드 ── */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  /* ── 전체 플로우 ── */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .flow-step {
+    display: flex;
+    gap: 20px;
+    position: relative;
+  }
+  .flow-step:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 19px;
+    top: 40px;
+    bottom: -12px;
+    width: 2px;
+    background: #e5e7eb;
+  }
+  .flow-step + .flow-step {
+    margin-top: 12px;
+  }
+  .step-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .step-body {
+    flex: 1;
+    padding: 8px 0 16px;
+  }
+  .step-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .step-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #111827;
+    margin: 3px 0 6px;
+  }
+  .step-desc {
+    font-size: 14px;
+    color: #4b5563;
+    line-height: 1.6;
+  }
+  .step-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 6px;
+    background: #f3f4f6;
+    color: #374151;
+  }
+
+  /* 색상 팔레트 */
+  .c-cyan    { background: #ecfeff; color: #0891b2; }
+  .c-indigo  { background: #eef2ff; color: #4f46e5; }
+  .c-violet  { background: #f5f3ff; color: #7c3aed; }
+  .c-blue    { background: #eff6ff; color: #2563eb; }
+  .c-sky     { background: #f0f9ff; color: #0284c7; }
+  .c-teal    { background: #f0fdfa; color: #0d9488; }
+  .c-green   { background: #f0fdf4; color: #16a34a; }
+  .c-amber   { background: #fffbeb; color: #d97706; }
+  .c-red     { background: #fef2f2; color: #dc2626; }
+  .c-gray    { background: #f9fafb; color: #374151; }
+
+  .icon-bg-cyan   { background: #ecfeff; }
+  .icon-bg-indigo { background: #eef2ff; }
+  .icon-bg-violet { background: #f5f3ff; }
+  .icon-bg-blue   { background: #eff6ff; }
+  .icon-bg-teal   { background: #f0fdfa; }
+  .icon-bg-green  { background: #f0fdf4; }
+  .icon-bg-amber  { background: #fffbeb; }
+  .icon-bg-red    { background: #fef2f2; }
+  .icon-bg-gray   { background: #f3f4f6; }
+
+  /* ── Git 플로우 타임라인 ── */
+  .git-timeline {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    overflow-x: auto;
+    padding: 4px 0 8px;
+  }
+  .git-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 120px;
+    flex: 1;
+    position: relative;
+  }
+  .git-node:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 18px;
+    left: calc(50% + 18px);
+    right: calc(-50% + 18px);
+    height: 2px;
+    background: #d1d5db;
+  }
+  .git-dot {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    position: relative;
+    z-index: 1;
+    border: 2px solid #e5e7eb;
+    background: #fff;
+  }
+  .git-dot.active { border-color: #0891b2; background: #ecfeff; }
+  .git-node-label {
+    margin-top: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    text-align: center;
+  }
+  .git-node-sub {
+    font-size: 11px;
+    color: #9ca3af;
+    text-align: center;
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+
+  /* ── Wave 레이아웃 시각화 ── */
+  .tmux-preview {
+    background: #1e2030;
+    border-radius: 10px;
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #a9b1d6;
+  }
+  .tmux-row {
+    display: flex;
+    gap: 8px;
+    height: 80px;
+  }
+  .tmux-row + .tmux-row { margin-top: 8px; }
+  .tmux-pane {
+    border: 1px solid #3d405e;
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+  }
+  .pane-title {
+    font-size: 10px;
+    color: #7aa2f7;
+    font-weight: 500;
+    border-bottom: 1px solid #3d405e;
+    padding-bottom: 4px;
+    margin-bottom: 2px;
+  }
+  .pane-content {
+    font-size: 10px;
+    color: #565f89;
+    line-height: 1.5;
+  }
+  .pane-main { flex: 1.4; }
+  .pane-wave { flex: 1; }
+  .pane-small { flex: 1; height: auto; min-height: 50px; }
+  .wave-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+  }
+
+  /* ── 에이전트 그리드 ── */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .agent-card {
+    border-radius: 10px;
+    padding: 14px 16px;
+    border: 1px solid #e5e7eb;
+  }
+  .agent-emoji { font-size: 22px; }
+  .agent-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+    margin: 6px 0 3px;
+  }
+  .agent-wave {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-bottom: 6px;
+  }
+  .wave-a { background: #eff6ff; color: #2563eb; }
+  .wave-b { background: #f0fdf4; color: #16a34a; }
+  .agent-desc {
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.5;
+  }
+
+  /* ── Debate 설명 ── */
+  .debate-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .debate-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .debate-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .debate-text .dt-title { font-size: 14px; font-weight: 600; color: #111827; }
+  .debate-text .dt-desc  { font-size: 13px; color: #6b7280; margin-top: 3px; line-height: 1.5; }
+
+  /* ── 판정 배지 ── */
+  .verdict-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .verdict-badge {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 6px;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── 코드 블록 ── */
+  .code {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #1e293b;
+    margin-top: 10px;
+    white-space: pre-wrap;
+    line-height: 1.6;
+  }
+  .code .cm { color: #94a3b8; }
+  .code .ck { color: #0891b2; font-weight: 500; }
+  .code .cv { color: #0284c7; }
+  .code .cs { color: #16a34a; }
+
+  /* ── 요약 박스 ── */
+  .summary-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .summary-box .s-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #374151;
+    margin-bottom: 10px;
+  }
+  .summary-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .summary-list li {
+    font-size: 13px;
+    color: #4b5563;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+  }
+  .summary-list li::before {
+    content: '✓';
+    color: #10b981;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  @media (max-width: 768px) {
+    .top-nav { padding: 0 20px; }
+    .nav-divider, .breadcrumb { padding-left: 20px; padding-right: 20px; }
+    .page { padding: 24px 20px 60px; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .agent-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .agent-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="top-nav">
+    <div class="nav-left">
+      <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
+      <div class="nav-divider"></div>
+      <a href="sq-tutorial.html" class="nav-link active">sq</a>
+    </div>
+    <span class="nav-badge">Search Quality</span>
+  </nav>
+  <div class="breadcrumb">
+    <a href="../index.html">~/tmux</a>
+    <span class="bc-sep">/</span>
+    <a href="sq-tutorial.html">sq</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">개요</span>
+  </div>
+</header>
+
+<div class="page">
+
+  <!-- ── 헤더 ── -->
+  <div class="header">
+    <div class="header-icon">🔍</div>
+    <div class="header-text">
+      <h1>sq</h1>
+      <p>danble OpenSearch 검색 품질 개선 워크플로 — 분석부터 PR까지 원커맨드</p>
+      <span class="badge">Search Quality · OpenSearch</span>
+    </div>
+  </div>
+
+  <!-- ── Git 플로우 (항상 실행) ── -->
+  <div class="card">
+    <div class="card-title">Git 플로우 — 항상 자동 실행</div>
+    <div class="git-timeline">
+      <div class="git-node">
+        <div class="git-dot active">🌿</div>
+        <div class="git-node-label">브랜치 생성</div>
+        <div class="git-node-sub">sq/{slug}<br>-{timestamp}</div>
+      </div>
+      <div class="git-node">
+        <div class="git-dot active">💾</div>
+        <div class="git-node-label">중간 커밋</div>
+        <div class="git-node-sub">Wave A 완료 후<br>자동 push</div>
+      </div>
+      <div class="git-node">
+        <div class="git-dot active">💾</div>
+        <div class="git-node-label">중간 커밋</div>
+        <div class="git-node-sub">Wave B 완료 후<br>자동 push</div>
+      </div>
+      <div class="git-node">
+        <div class="git-dot active">🔧</div>
+        <div class="git-node-label">수정 커밋</div>
+        <div class="git-node-sub">자동 수정<br>라운드마다</div>
+      </div>
+      <div class="git-node">
+        <div class="git-dot active">📬</div>
+        <div class="git-node-label">PR 생성</div>
+        <div class="git-node-sub">게이트 무관<br>항상 실행</div>
+      </div>
+    </div>
+    <div style="margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap;">
+      <span class="tag c-green">✓ 보호 브랜치(main/master/prd)면 sq/{slug} 브랜치 자동 생성</span>
+      <span class="tag c-blue">✓ 변경사항 없으면 커밋 자동 스킵</span>
+      <span class="tag c-amber">✓ 게이트 실패 시 Draft PR · 통과 시 일반 PR</span>
+      <span class="tag c-cyan">✓ 라벨 "Search Quality" 자동 부착</span>
+    </div>
+  </div>
+
+  <!-- ── 전체 실행 흐름 ── -->
+  <div class="card">
+    <div class="card-title">전체 실행 흐름</div>
+    <div class="flow">
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-cyan">🌿</div>
+        <div class="step-body">
+          <div class="step-label">Git 사전작업</div>
+          <div class="step-title">브랜치 생성 &amp; 초기 설정</div>
+          <div class="step-desc">feature 설명에서 ASCII 슬러그 추출 → <code>sq/{slug}-{YYYYMMDD-HHmmss}</code> 브랜치 생성. 이미 feature 브랜치에 있으면 현재 브랜치 그대로 사용.</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon" style="background:#f0fdf4;">🗄️</div>
+        <div class="step-body">
+          <div class="step-label">DB 연결 확인</div>
+          <div class="step-title">danble PostgreSQL read-only 접속 테스트</div>
+          <div class="step-desc">자격증명을 <code>~/.config/sq/db.env</code>에서 로드 후 psql 연결 테스트. 실패해도 에러로 중단되지 않고 경고만 출력하며 에이전트는 DB 없이 동작.</div>
+          <div class="step-tags">
+            <span class="tag c-green">✓ 연결 성공 시 에이전트에 DB 컨텍스트 주입</span>
+            <span class="tag c-gray">자격증명은 git에 포함되지 않음 (로컬 전용)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-cyan">📐</div>
+        <div class="step-body">
+          <div class="step-label">Phase 1</div>
+          <div class="step-title">Architect — 계획 수립 &amp; 에이전트 선택</div>
+          <div class="step-desc">검색 품질 개선 요청을 분석해 <code>plan.md</code>와 <code>agents.txt</code> 자동 생성. 불필요한 에이전트는 제외.</div>
+          <div class="step-tags">
+            <span class="tag c-gray">쿼리 최적화 → opensearch 필수</span>
+            <span class="tag c-gray">API 수정 → api</span>
+            <span class="tag c-gray">자동화 실행 → runner</span>
+            <span class="tag c-gray">리포트 생성 → reporter</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-violet">🗣️</div>
+        <div class="step-body">
+          <div class="step-label">Debate 1</div>
+          <div class="step-title">설계 계획 Red / Blue / Judge 토론</div>
+          <div class="step-desc">🔴 Red가 plan.md 허점 공격 → 🔵 Blue가 ACCEPT/MITIGATE/REJECT 판정 후 수정 → ⚖️ Judge가 최대 2라운드 심판. CONSENSUS 시 Phase 3 진입.</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-blue">⚡</div>
+        <div class="step-body">
+          <div class="step-label">Phase 3</div>
+          <div class="step-title">2-Wave 병렬 에이전트 실행</div>
+          <div class="step-desc">Wave A(분석/실행) 완료 후 Wave B(평가/보고) 시작. Wave A 패널은 B가 시작될 때까지 화면에 유지.</div>
+          <div class="step-tags">
+            <span class="tag c-blue">Wave A: opensearch · api · runner</span>
+            <span class="tag c-green">Wave B: scorer · reporter</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-teal">💾</div>
+        <div class="step-body">
+          <div class="step-label">중간 Git</div>
+          <div class="step-title">Wave A 완료 후 커밋 / Wave B 완료 후 커밋</div>
+          <div class="step-desc">각 Wave 완료 시 변경사항 자동 <code>git add -A</code> → commit → push. 변경사항 없으면 스킵.</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-violet">🗣️</div>
+        <div class="step-body">
+          <div class="step-label">Debate 2</div>
+          <div class="step-title">분석 결과 토론 — REWORK 판정 시 Wave 재실행</div>
+          <div class="step-desc">에이전트 구성에 따라 scorer(품질 점수) 또는 reporter(리포트 품질) 초점으로 토론. Judge가 REWORK 판정 시 Wave 처음부터 재실행 (횟수 제한 없음).</div>
+          <div class="step-tags">
+            <span class="tag c-green">CONSENSUS → 다음 단계</span>
+            <span class="tag c-amber">CONTINUE → 다음 라운드</span>
+            <span class="tag c-red">REWORK → Wave 재실행</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-amber">🔬</div>
+        <div class="step-body">
+          <div class="step-label">Phase 3.5</div>
+          <div class="step-title">사이드 이펙트 영향도 분석</div>
+          <div class="step-desc">Phase 3에서 변경된 파일을 분석해 기존 검색 기능에 미칠 수 있는 영향 범위와 위험도를 예측. 결과는 <code>impact_analysis.md</code>로 저장되고 PR 본문에 포함됨.</div>
+          <div class="step-tags">
+            <span class="tag c-red">🔴 HIGH — 서비스 검색 즉시 영향</span>
+            <span class="tag c-amber">🟡 MEDIUM — 일부 케이스 영향</span>
+            <span class="tag c-green">🟢 LOW — 오프라인 분석만</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-green">🔍</div>
+        <div class="step-body">
+          <div class="step-label">Phase 4</div>
+          <div class="step-title">CI 하네스 게이트 — 4단계</div>
+          <div class="step-desc">tsc → eslint → test → build. 실패 항목이 있으면 Phase 5로 이동.</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-amber">🔄</div>
+        <div class="step-body">
+          <div class="step-label">Phase 5 (실패 시)</div>
+          <div class="step-title">자동 수정 루프 — 최대 3라운드</div>
+          <div class="step-desc">실패 로그를 에이전트에게 전달 → 코드 수정 → 게이트 재검사 → 커밋/푸시. 라운드마다 자동 커밋.</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-cyan">📬</div>
+        <div class="step-body">
+          <div class="step-label">Phase 6 — 항상 실행</div>
+          <div class="step-title">릴리스 매니저 — 최종 커밋 / 푸시 / PR 생성</div>
+          <div class="step-desc">게이트 통과 여부와 무관하게 무조건 실행. 미커밋 변경사항 정리 → push → PR 생성 또는 업데이트. 기존 PR 있으면 본문 업데이트.</div>
+          <div class="step-tags">
+            <span class="tag c-green">게이트 통과 → 일반 PR</span>
+            <span class="tag c-amber">게이트 실패 → Draft PR</span>
+            <span class="tag c-cyan">라벨: Search Quality 필수</span>
+            <span class="tag c-red">prd/master 베이스 금지</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── 에이전트 구성 + tmux 레이아웃 ── -->
+  <div class="grid-2">
+
+    <div class="card">
+      <div class="card-title">에이전트 구성</div>
+      <div class="agent-grid">
+        <div class="agent-card">
+          <div class="agent-emoji">🔎</div>
+          <div class="agent-name">opensearch</div>
+          <div class="agent-wave wave-a">Wave A</div>
+          <div class="agent-desc">OpenSearch 쿼리 DSL, boost/weight 최적화, 인덱스 매핑 검토. <strong>DB:</strong> auto_score/md_score 분포 · 0건 키워드 조회</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">🔌</div>
+          <div class="agent-name">api</div>
+          <div class="agent-wave wave-a">Wave A</div>
+          <div class="agent-desc">검색 API 파라미터 분석, 스크립트 수정, 응답 파싱 검증. <strong>DB:</strong> search_logs 패턴 · rankings 조회</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">🏃</div>
+          <div class="agent-name">runner</div>
+          <div class="agent-wave wave-a">Wave A</div>
+          <div class="agent-desc">자동 검색 실행, 50개 단위 배치, JSON 결과 즉시 저장. <strong>DB:</strong> search_keywords rank 순 키워드 리스트 추출</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">📊</div>
+          <div class="agent-name">scorer</div>
+          <div class="agent-wave wave-b">Wave B</div>
+          <div class="agent-desc">100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분. <strong>DB:</strong> product_displays로 실제 상품 정보 검증</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">📝</div>
+          <div class="agent-name">reporter</div>
+          <div class="agent-wave wave-b">Wave B</div>
+          <div class="agent-desc">MD/CSV 리포트 생성, 스크린샷 수집, 결과 문서화. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">tmux 레이아웃 — Wave A → Wave B</div>
+
+      <!-- Step 1 -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="background:#3b4252;color:#7aa2f7;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP 1</span>
+          <span style="font-size:13px;font-weight:600;color:#374151;">Wave A 실행 중</span>
+          <span style="font-size:12px;color:#9ca3af;">— 분석/실행 에이전트만 열림</span>
+        </div>
+        <div class="tmux-preview">
+          <div class="tmux-row">
+            <div class="tmux-pane pane-main">
+              <div class="pane-title">🔍 sq</div>
+              <div class="pane-content">Phase 3 실행 중...<br>⏳ Wave A: 1/3</div>
+            </div>
+            <div class="wave-col">
+              <div class="tmux-pane pane-small">
+                <div class="pane-title">🔎 opensearch</div>
+                <div class="pane-content">쿼리 DSL 최적화 중</div>
+              </div>
+              <div class="tmux-pane pane-small">
+                <div class="pane-title">🔌 api</div>
+                <div class="pane-content">API 파라미터 수정 중</div>
+              </div>
+              <div class="tmux-pane pane-small">
+                <div class="pane-title">🏃 runner</div>
+                <div class="pane-content">배치 검색 실행 중</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 화살표 -->
+      <div style="text-align:center;font-size:18px;color:#9ca3af;margin:4px 0 12px;letter-spacing:2px;">↓ Wave A 완료 · 커밋/푸시</div>
+
+      <!-- Step 2 -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="background:#1a3a2a;color:#4c9a6a;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP 2</span>
+          <span style="font-size:13px;font-weight:600;color:#374151;">Wave B 시작</span>
+          <span style="font-size:12px;color:#9ca3af;">— A 패널 유지된 채 B 열림</span>
+        </div>
+        <div class="tmux-preview">
+          <div class="tmux-row">
+            <div class="tmux-pane pane-main">
+              <div class="pane-title">🔍 sq</div>
+              <div class="pane-content">✅ Wave A 완료<br>💾 커밋/푸시 완료</div>
+            </div>
+            <div class="wave-col">
+              <div class="tmux-pane pane-small" style="border-color:#2a4a3a;">
+                <div class="pane-title" style="color:#4c9a6a;">🔎 opensearch ✓</div>
+                <div class="pane-content" style="color:#4c9a6a;">완료</div>
+              </div>
+              <div class="tmux-pane pane-small" style="border-color:#2a4a3a;">
+                <div class="pane-title" style="color:#4c9a6a;">🔌 api ✓</div>
+                <div class="pane-content" style="color:#4c9a6a;">완료</div>
+              </div>
+            </div>
+            <div class="wave-col">
+              <div class="tmux-pane pane-small" style="border-color:#3a3a5e;">
+                <div class="pane-title" style="color:#bb9af7;">📊 scorer</div>
+                <div class="pane-content">품질 점수 산정 중</div>
+              </div>
+              <div class="tmux-pane pane-small" style="border-color:#3a3a5e;">
+                <div class="pane-title" style="color:#bb9af7;">📝 reporter</div>
+                <div class="pane-content">리포트 생성 중</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;font-size:12px;color:#9ca3af;text-align:right;">Wave B 완료 후 A+B 패널 모두 자동 닫힘 → 메인 복귀</div>
+    </div>
+
+  </div>
+
+  <!-- ── 검색 품질 평가 기준 ── -->
+  <div class="card">
+    <div class="card-title">📊 검색 품질 평가 기준 — 100점 만점</div>
+
+    <!-- 이중 의도 강조 배너 -->
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;gap:14px;align-items:flex-start;">
+      <span style="font-size:22px;flex-shrink:0;">⚠️</span>
+      <div>
+        <div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:6px;">이중 의도 쿼리 (Dual Intent Query) 주의</div>
+        <div style="font-size:13px;color:#78350f;line-height:1.7;">
+          <strong>"진스"</strong>처럼 카테고리(진스 바지)이면서 동시에 브랜드명(타미진스)을 포함하는 검색어의 경우,
+          두 의도가 모두 결과에 반영되어야 정상입니다.<br>
+          한쪽 의도만 노출되면 <strong>이중 의도 커버리지 점수 0점</strong> 처리됩니다.<br>
+          판별 기준: <code>search_category_keywords</code> + <code>search_brand_keywords</code> 양쪽에 동일 keyword_id가 존재하는 경우.
+        </div>
+      </div>
+    </div>
+
+    <!-- 점수 항목 -->
+    <div style="display:flex;flex-direction:column;gap:10px;">
+
+      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
+        <div style="width:28px;height:28px;border-radius:6px;background:#ecfeff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🔎</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">결과 존재 여부</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;">검색 결과 1건 이상 → 20점 / 0건 → 0점</div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">20점</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #fde68a;border-radius:10px;background:#fffbeb;">
+        <div style="width:28px;height:28px;border-radius:6px;background:#fef3c7;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🎯</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">이중 의도 커버리지 <span style="font-size:11px;font-weight:600;background:#fde68a;color:#92400e;padding:2px 7px;border-radius:4px;margin-left:4px;">★ 핵심</span></div>
+          <div style="font-size:12px;color:#6b7280;margin-top:5px;line-height:1.7;">
+            <div style="display:flex;gap:6px;margin-bottom:4px;"><span style="color:#d97706;font-weight:600;">카테고리 의도 (12점)</span> 키워드가 카테고리를 의미할 때 해당 카테고리 상품 포함</div>
+            <div style="display:flex;gap:6px;"><span style="color:#d97706;font-weight:600;">브랜드 의도 (13점)</span> 키워드가 브랜드명 포함 시 해당 브랜드 상품 포함</div>
+            <div style="margin-top:6px;padding:6px 10px;background:#fef9ee;border-radius:6px;font-size:11px;color:#92400e;">
+              예: "진스" → 진스 카테고리 바지 누락 시 -12점 / 타미진스 브랜드 상품 누락 시 -13점
+            </div>
+          </div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#d97706;white-space:nowrap;">25점</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
+        <div style="width:28px;height:28px;border-radius:6px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">✅</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">관련성</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;">상위 10개 중 80% 이상 직접 관련 → 15점 / 60~79% → 10점 / 40~59% → 5점 / 미만 → 0점</div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">15점</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
+        <div style="width:28px;height:28px;border-radius:6px;background:#f0fdf4;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">📍</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">상위 노출 적절성</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;">가장 관련성 높은 상품이 1~3위 → 10점 / 4~10위 → 5점 / 10위 밖 → 0점</div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">10점</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
+        <div style="width:28px;height:28px;border-radius:6px;background:#f0fdf4;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💰</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">가격대 적절성</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;"><code>product_displays.price</code> 기준 예상 가격대 일치 상품 60% 이상 → 15점 / 40~59% → 8점 / 미만 → 0점</div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">15점</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
+        <div style="width:28px;height:28px;border-radius:6px;background:#f5f3ff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🌈</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">다양성</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;">브랜드 다양성(8점): 상위 10개에 3개 이상 브랜드 포함 / 스타일 다양성(7점): 색상·디자인 다양성</div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">15점</div>
+      </div>
+
+    </div>
+
+    <!-- 등급 표 -->
+    <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <span style="font-size:12px;font-weight:600;color:#6b7280;margin-right:4px;">등급 기준</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#f0fdf4;color:#16a34a;">A  90~100</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#eff6ff;color:#2563eb;">B  75~89</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#fffbeb;color:#d97706;">C  60~74</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#fef2f2;color:#dc2626;">D  45~59</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#f3f4f6;color:#374151;">F  44 이하</span>
+    </div>
+  </div>
+
+  <!-- ── Debate 시스템 ── -->
+  <div class="card">
+    <div class="card-title">Debate 시스템 — Red / Blue / Judge</div>
+    <div class="debate-row">
+      <div class="debate-icon" style="background:#fef2f2;">🔴</div>
+      <div class="debate-text">
+        <div class="dt-title">Red (공격자)</div>
+        <div class="dt-desc">계획/분석의 허점, 위험요소, 누락된 엣지케이스를 공격. 해결책 제시 금지 — 문제 지적만.</div>
+      </div>
+    </div>
+    <div class="debate-row">
+      <div class="debate-icon" style="background:#eff6ff;">🔵</div>
+      <div class="debate-text">
+        <div class="dt-title">Blue (방어자)</div>
+        <div class="dt-desc">각 공격 항목을 ACCEPT / MITIGATE / REJECT로 판정. ACCEPT·MITIGATE는 실제 파일을 수정해 반영.</div>
+      </div>
+    </div>
+    <div class="debate-row">
+      <div class="debate-icon" style="background:#fffbeb;">⚖️</div>
+      <div class="debate-text">
+        <div class="dt-title">Judge (심판)</div>
+        <div class="dt-desc">Red/Blue 토론을 심판. Debate 2에서는 REWORK 판정으로 Wave 전체 재실행 가능 (횟수 제한 없음).</div>
+        <div class="verdict-row">
+          <span class="verdict-badge" style="background:#f0fdf4; color:#16a34a;">CONSENSUS</span>
+          <span class="verdict-badge" style="background:#fffbeb; color:#d97706;">CONTINUE</span>
+          <span class="verdict-badge" style="background:#fef2f2; color:#dc2626;">REWORK</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DB 접근 & 보안 ── -->
+  <div class="card">
+    <div class="card-title">🗄️ PostgreSQL DB 접근 — danble read-only replica</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;">보안 구조</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+            <span style="font-size:16px;flex-shrink:0;">🔐</span>
+            <div style="font-size:13px;color:#374151;">
+              <strong>자격증명 파일</strong><br>
+              <code style="font-size:11px;">~/.config/sq/db.env</code><br>
+              <span style="color:#6b7280;font-size:12px;">로컬 전용 · chmod 600 · git 비추적</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;">
+            <span style="font-size:16px;flex-shrink:0;">⚙️</span>
+            <div style="font-size:13px;color:#374151;">
+              <strong>최초 설정</strong><br>
+              <code style="font-size:11px;">bash sq-setup</code><br>
+              <span style="color:#6b7280;font-size:12px;">psql 설치 + 연결 테스트 + PATH 등록</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">
+            <span style="font-size:16px;flex-shrink:0;">🚫</span>
+            <div style="font-size:13px;color:#374151;">
+              <strong>git 파일에 비밀번호 없음</strong><br>
+              <span style="color:#6b7280;font-size:12px;">sq · sq-setup 소스 파일에 자격증명 미포함</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;">주요 검색 관련 테이블</div>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+            <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#0891b2;font-weight:600;min-width:180px;">search_keywords</span>
+            <span style="font-size:12px;color:#6b7280;">키워드 마스터 · rank · score</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+            <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#0891b2;font-weight:600;min-width:180px;">search_logs</span>
+            <span style="font-size:12px;color:#6b7280;">사용자 검색 로그 · 최근 패턴</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+            <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#0891b2;font-weight:600;min-width:180px;">search_keyword_rankings</span>
+            <span style="font-size:12px;color:#6b7280;">랭킹 점수 · result_count</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+            <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#0891b2;font-weight:600;min-width:180px;">product_display_keywords</span>
+            <span style="font-size:12px;color:#6b7280;">상품-키워드 매핑</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+            <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#0891b2;font-weight:600;min-width:180px;">product_displays</span>
+            <span style="font-size:12px;color:#6b7280;">상품 전시 정보 · sale_status</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+            <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#0891b2;font-weight:600;min-width:180px;">search_keyword_relations</span>
+            <span style="font-size:12px;color:#6b7280;">연관 키워드 · relation_score</span>
+          </div>
+          <div style="text-align:right;margin-top:4px;">
+            <span style="font-size:11px;color:#9ca3af;">SELECT only · INSERT/UPDATE/DELETE 불가</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="code"><span class="cm"># 최초 1회 — DB 환경 셋업 (psql 설치 + 연결 테스트 + PATH 등록)</span>
+<span class="cv">bash</span> ~/development/tmux/sq/sq-setup
+
+<span class="cm"># 이후 sq 실행 시 ~/.config/sq/db.env 자동 로드</span>
+<span class="cv">sq</span> <span class="cs">"검색 품질 개선 내용"</span>
+
+<span class="cm"># DB 직접 접속 (확인용)</span>
+<span class="ck">source</span> ~/.config/sq/db.env
+<span class="cv">psql</span> -h <span class="cs">"${PGHOST}"</span> -U <span class="cs">"${PGUSER}"</span> -d <span class="cs">"${PGDATABASE}"</span> --no-password</div>
+  </div>
+
+  <!-- ── 사용법 ── -->
+  <div class="card">
+    <div class="card-title">사용법</div>
+    <div class="code"><span class="cm"># tmux 세션에서 실행 (패널 분할을 위해 필수)</span>
+<span class="ck">tmux new-session</span> -s work
+
+<span class="cm"># 실행</span>
+<span class="cv">sq</span> <span class="cs">"검색 품질 개선 내용을 자연어로 설명"</span>
+
+<span class="cm"># 예시</span>
+<span class="cv">sq</span> <span class="cs">"OpenSearch 검색 쿼리 가중치 조정으로 카테고리 매칭 정확도 향상"</span>
+<span class="cv">sq</span> <span class="cs">"검색 결과 0건 비율 개선 — step 파라미터 및 limit 수정"</span>
+<span class="cv">sq</span> <span class="cs">"40~50대 남성 의류 키워드 300개 검색 품질 스모크 테스트"</span></div>
+
+    <div style="margin-top:16px;">
+      <div class="summary-box">
+        <div class="s-title">핵심 특징</div>
+        <ul class="summary-list">
+          <li>요청 내용에 따라 Architect가 필요한 에이전트만 자동 선택</li>
+          <li>브랜치 생성 → 중간 커밋 → PR 생성이 모든 실행에서 자동으로 보장</li>
+          <li>Wave A(분석/실행) → Wave B(평가/보고) 순차 실행 — 데이터 수집 완료 후 점수·리포트 생성</li>
+          <li>Debate 2에서 REWORK 판정 시 Wave를 횟수 제한 없이 재실행</li>
+          <li>게이트 실패해도 Draft PR 자동 생성 — 팀에 진행 상황 공유</li>
+          <li>모든 프롬프트는 파일 경로 참조 방식 — OS 인자 한도 초과 없음</li>
+          <li>에이전트가 danble 운영 DB에 직접 쿼리 — 실제 키워드·점수·상품 데이터 기반 분석</li>
+          <li>DB 자격증명은 <code>~/.config/sq/db.env</code>에만 보관 — git 저장소에 절대 포함되지 않음</li>
+        </ul>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;">
+      <div class="summary-box" style="border-left-color:#10b981;">
+        <div class="s-title" style="color:#10b981;">✅ 완료된 코드 개선</div>
+        <ul class="summary-list">
+          <li><strong>디버그 print 제거 (2026-04)</strong> — <code>search_service.py</code> <code>_make_product_search_query</code> 내 <code>print(should_conditions)</code> 제거. 프로덕션 로그 오염 해소.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer class="site-footer">
+  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
+</footer>
+
+</body>
+</html>
