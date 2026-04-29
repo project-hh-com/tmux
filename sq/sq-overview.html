@@ -727,7 +727,7 @@
           <div class="agent-emoji">📝</div>
           <div class="agent-name">reporter</div>
           <div class="agent-wave wave-b">Wave B</div>
-          <div class="agent-desc">리포트 생성: <code>search-quality-report.md</code> · <code>search-quality-detail.md</code> · <code>search-quality-detail.csv</code> → <code>~/development/search-quality/</code> 저장. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
+          <div class="agent-desc">리포트 생성: <code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). 세그먼트별 분리 통계(GENERAL/FALLBACK/ZERO_RESULT) 포함. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
         </div>
       </div>
     </div>
@@ -829,6 +829,18 @@
       </div>
     </div>
 
+    <!-- 폴백 경고 -->
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start;">
+      <div style="font-size:18px;flex-shrink:0;">🚨</div>
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#991b1b;margin-bottom:4px;">폴백(전체 반환) 우선 감지</div>
+        <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">
+          danble 검색 API는 매칭 실패 시 <strong>전체 상품을 반환(폴백)</strong>합니다. result_count가 커도 실제 검색 실패.<br>
+          판정 기준: <code>total_count &gt; 3000</code> → 즉시 <strong>F등급 · FALLBACK segment</strong>로 처리, 이후 채점 건너뜀.
+        </div>
+      </div>
+    </div>
+
     <!-- 점수 항목 -->
     <div style="display:flex;flex-direction:column;gap:10px;">
 
@@ -836,76 +848,78 @@
         <div style="width:28px;height:28px;border-radius:6px;background:#ecfeff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🔎</div>
         <div>
           <div style="font-size:14px;font-weight:700;color:#111827;">결과 존재 여부</div>
-          <div style="font-size:12px;color:#6b7280;margin-top:3px;">검색 결과 1건 이상 → 20점 / 0건 → 0점</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;">검색 결과 1건 이상 (폴백 제외) → 20점 / 0건 → 0점</div>
         </div>
         <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">20점</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #dbeafe;border-radius:10px;background:#eff6ff;">
+        <div style="width:28px;height:28px;border-radius:6px;background:#dbeafe;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">✅</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">관련성 <span style="font-size:11px;font-weight:600;background:#dbeafe;color:#1e40af;padding:2px 7px;border-radius:4px;margin-left:4px;">★ 핵심</span></div>
+          <div style="font-size:12px;color:#6b7280;margin-top:5px;line-height:1.7;">
+            상위 min(결과수, 10)개 상품 중 키워드와 관련된 상품 비율 × 30점 <strong>(연속값)</strong><br>
+            <span style="color:#2563eb;font-weight:600;">관련 판정</span>: 상품명·브랜드명·카테고리명에 키워드 포함 여부 (텍스트 매칭 + AI 판단)<br>
+            <span style="font-size:11px;color:#9ca3af;">예: 10개 중 7개 관련 → 7/10 × 30 = 21점</span>
+          </div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#2563eb;white-space:nowrap;">30점</div>
       </div>
 
       <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #fde68a;border-radius:10px;background:#fffbeb;">
         <div style="width:28px;height:28px;border-radius:6px;background:#fef3c7;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🎯</div>
         <div>
-          <div style="font-size:14px;font-weight:700;color:#111827;">이중 의도 커버리지 <span style="font-size:11px;font-weight:600;background:#fde68a;color:#92400e;padding:2px 7px;border-radius:4px;margin-left:4px;">★ 핵심</span></div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">이중 의도 커버리지</div>
           <div style="font-size:12px;color:#6b7280;margin-top:5px;line-height:1.7;">
-            <div style="display:flex;gap:6px;margin-bottom:4px;"><span style="color:#d97706;font-weight:600;">카테고리 의도 (12점)</span> 키워드가 카테고리를 의미할 때 해당 카테고리 상품 포함</div>
-            <div style="display:flex;gap:6px;"><span style="color:#d97706;font-weight:600;">브랜드 의도 (13점)</span> 키워드가 브랜드명 포함 시 해당 브랜드 상품 포함</div>
-            <div style="margin-top:6px;padding:6px 10px;background:#fef9ee;border-radius:6px;font-size:11px;color:#92400e;">
-              예: "진스" → 진스 카테고리 바지 누락 시 -12점 / 타미진스 브랜드 상품 누락 시 -13점
+            <div style="margin-bottom:4px;"><span style="color:#d97706;font-weight:600;">DB 조회 필수</span> — <code>search_category_keywords</code> + <code>search_brand_keywords</code> 양쪽 확인 후 점수 부여</div>
+            <div style="display:flex;gap:6px;margin-bottom:2px;"><span style="color:#d97706;font-weight:600;">카테고리 의도 (10점)</span> 해당 카테고리 상품 결과에 포함 여부</div>
+            <div style="display:flex;gap:6px;margin-bottom:4px;"><span style="color:#d97706;font-weight:600;">브랜드 의도 (10점)</span> 해당 브랜드 상품 결과에 포함 여부</div>
+            <div style="padding:5px 10px;background:#fef9ee;border-radius:6px;font-size:11px;color:#92400e;">
+              단일 의도(카테고리 XOR 브랜드만) → 20점 만점 처리 | 미등록 키워드 → 0점
             </div>
           </div>
         </div>
-        <div style="font-size:18px;font-weight:800;color:#d97706;white-space:nowrap;">25점</div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
-        <div style="width:28px;height:28px;border-radius:6px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">✅</div>
-        <div>
-          <div style="font-size:14px;font-weight:700;color:#111827;">관련성</div>
-          <div style="font-size:12px;color:#6b7280;margin-top:3px;">상위 10개 중 80% 이상 직접 관련 → 15점 / 60~79% → 10점 / 40~59% → 5점 / 미만 → 0점</div>
-        </div>
-        <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">15점</div>
+        <div style="font-size:18px;font-weight:800;color:#d97706;white-space:nowrap;">20점</div>
       </div>
 
       <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
         <div style="width:28px;height:28px;border-radius:6px;background:#f0fdf4;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">📍</div>
         <div>
           <div style="font-size:14px;font-weight:700;color:#111827;">상위 노출 적절성</div>
-          <div style="font-size:12px;color:#6b7280;margin-top:3px;">가장 관련성 높은 상품이 1~3위 → 10점 / 4~10위 → 5점 / 10위 밖 → 0점</div>
-        </div>
-        <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">10점</div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
-        <div style="width:28px;height:28px;border-radius:6px;background:#f0fdf4;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">💰</div>
-        <div>
-          <div style="font-size:14px;font-weight:700;color:#111827;">가격대 적절성</div>
-          <div style="font-size:12px;color:#6b7280;margin-top:3px;"><code>product_displays.price</code> 기준 예상 가격대 일치 상품 60% 이상 → 15점 / 40~59% → 8점 / 미만 → 0점</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;">가장 관련성 높은 상품이 1~3위 → 15점 / 4~7위 → 8점 / 8~10위 → 4점 / 11위 밖 → 0점</div>
         </div>
         <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">15점</div>
       </div>
 
       <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
-        <div style="width:28px;height:28px;border-radius:6px;background:#f0fdf4;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">📖</div>
+        <div style="width:28px;height:28px;border-radius:6px;background:#fef3f2;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">📦</div>
         <div>
-          <div style="font-size:14px;font-weight:700;color:#111827;">유사어/사전 커버리지</div>
-          <div style="font-size:12px;color:#6b7280;margin-top:5px;line-height:1.7;">
-            <div><span style="color:#059669;font-weight:600;">사전 등록 여부 (5점)</span> — <code>search_keywords</code>에 keyword/normalized_keyword로 조회 가능 여부. 미등록 시 형태소 분석·Fallback 모두 불가.</div>
-            <div><span style="color:#059669;font-weight:600;">동의어 SAME (5점)</span> — <code>search_keyword_relations</code>에 SAME 관계 1개 이상 존재 → Fallback Tier 1 가능</div>
-            <div><span style="color:#059669;font-weight:600;">유사어 SIMILAR (5점)</span> — SIMILAR 관계 1개 이상 존재 → Fallback Tier 2 가능</div>
-          </div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">품절 상품 노출</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;"><code>product_displays.is_sold_out</code> 기준. 품절률 0% → 15점 / 1~10% → 12점 / 11~30% → 6점 / 31% 이상 → 0점</div>
         </div>
         <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">15점</div>
       </div>
 
     </div>
 
+    <!-- 세그먼트 설명 -->
+    <div style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">
+      <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:8px;">리포트 세그먼트 분리</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <span style="padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;background:#f0fdf4;color:#166534;">GENERAL — 정상 결과 (평균 점수 산출 기준)</span>
+        <span style="padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;background:#fef2f2;color:#991b1b;">FALLBACK — 폴백 반환 (별도 집계)</span>
+        <span style="padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;background:#f3f4f6;color:#374151;">ZERO_RESULT — 결과 0건 (별도 집계)</span>
+      </div>
+    </div>
+
     <!-- 등급 표 -->
-    <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <span style="font-size:12px;font-weight:600;color:#6b7280;margin-right:4px;">등급 기준</span>
-      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#f0fdf4;color:#16a34a;">A  90~100</span>
-      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#eff6ff;color:#2563eb;">B  75~89</span>
-      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#fffbeb;color:#d97706;">C  60~74</span>
-      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#fef2f2;color:#dc2626;">D  45~59</span>
-      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#f3f4f6;color:#374151;">F  44 이하</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#f0fdf4;color:#16a34a;">A  85~100</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#eff6ff;color:#2563eb;">B  70~84</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#fffbeb;color:#d97706;">C  50~69</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#fef2f2;color:#dc2626;">D  30~49</span>
+      <span style="padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;background:#f3f4f6;color:#374151;">F  0~29</span>
     </div>
   </div>
 
@@ -1039,7 +1053,7 @@
         <div class="s-title">핵심 특징</div>
         <ul class="summary-list">
           <li>인자 없이 <code>sq</code>만 입력하면 "40~50대 남성 패션 키워드 500개 검색 품질 평가" 자동 실행 — 범위 지정 시 <code>sq "..."</code>로 덮어쓰기 가능</li>
-          <li>리포트는 <strong>실행한 현재 폴더</strong>에 저장 — 해당 폴더의 git 레포에 함께 커밋/푸시됨 (<code>~/development/search-quality/</code>에서 실행 시 search-quality-log에, danble-backend에서 실행 시 해당 레포에)</li>
+          <li>리포트는 <code>docs/reports/sq-{timestamp}/</code>에 저장 — 실행한 현재 폴더 기준 (예: <code>~/development/danble/search-quality/docs/reports/sq-20260429-172913/</code>). 해당 폴더의 git 레포에 함께 커밋/푸시됨</li>
           <li>요청 내용에 따라 Architect가 필요한 에이전트만 자동 선택</li>
           <li>브랜치 생성 → 중간 커밋 → PR 생성이 모든 실행에서 자동으로 보장</li>
           <li>Wave A(분석/실행) → Wave B(평가/보고) 순차 실행 — 데이터 수집 완료 후 점수·리포트 생성</li>
