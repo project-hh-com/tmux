@@ -1048,7 +1048,7 @@ AGENTPROMPT
 #!/usr/bin/env bash
 cd "${CWD}"
 echo "${EMOJI} ${AGENT_NAME} 에이전트 시작..."
-claude -p "\$(cat '${FLAG_DIR}/prompt_${IDX}.txt')" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions --timeout 7200000
+claude -p "\$(cat '${FLAG_DIR}/prompt_${IDX}.txt')" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions
 SCRIPTEOF
   chmod +x "$AGENT_SCRIPT"
 
