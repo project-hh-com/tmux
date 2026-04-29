@@ -727,7 +727,7 @@
           <div class="agent-emoji">📝</div>
           <div class="agent-name">reporter</div>
           <div class="agent-wave wave-b">Wave B</div>
-          <div class="agent-desc">MD/CSV 리포트 생성, 스크린샷 수집, 결과 문서화. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
+          <div class="agent-desc">리포트 생성: <code>search-quality-report.md</code> · <code>search-quality-detail.md</code> · <code>search-quality-detail.csv</code> → <code>~/development/search-quality/</code> 저장. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
         </div>
       </div>
     </div>
@@ -884,10 +884,14 @@
       </div>
 
       <div style="display:grid;grid-template-columns:28px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
-        <div style="width:28px;height:28px;border-radius:6px;background:#f5f3ff;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🌈</div>
+        <div style="width:28px;height:28px;border-radius:6px;background:#f0fdf4;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">📖</div>
         <div>
-          <div style="font-size:14px;font-weight:700;color:#111827;">다양성</div>
-          <div style="font-size:12px;color:#6b7280;margin-top:3px;">브랜드 다양성(8점): 상위 10개에 3개 이상 브랜드 포함 / 스타일 다양성(7점): 색상·디자인 다양성</div>
+          <div style="font-size:14px;font-weight:700;color:#111827;">유사어/사전 커버리지</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:5px;line-height:1.7;">
+            <div><span style="color:#059669;font-weight:600;">사전 등록 여부 (5점)</span> — <code>search_keywords</code>에 keyword/normalized_keyword로 조회 가능 여부. 미등록 시 형태소 분석·Fallback 모두 불가.</div>
+            <div><span style="color:#059669;font-weight:600;">동의어 SAME (5점)</span> — <code>search_keyword_relations</code>에 SAME 관계 1개 이상 존재 → Fallback Tier 1 가능</div>
+            <div><span style="color:#059669;font-weight:600;">유사어 SIMILAR (5점)</span> — SIMILAR 관계 1개 이상 존재 → Fallback Tier 2 가능</div>
+          </div>
         </div>
         <div style="font-size:18px;font-weight:800;color:#0891b2;white-space:nowrap;">15점</div>
       </div>
@@ -1022,18 +1026,20 @@
     <div class="code"><span class="cm"># tmux 세션에서 실행 (패널 분할을 위해 필수)</span>
 <span class="ck">tmux new-session</span> -s work
 
-<span class="cm"># 실행</span>
-<span class="cv">sq</span> <span class="cs">"검색 품질 개선 내용을 자연어로 설명"</span>
+<span class="cm"># 기본 실행 — 인자 없이 sq만 입력하면 기본 평가 자동 실행</span>
+<span class="cv">sq</span>   <span class="cm">← "40~50대 남성 패션 키워드 505개 검색 품질 평가" 자동 적용</span>
 
-<span class="cm"># 예시</span>
+<span class="cm"># 범위 지정 실행 — 특정 카테고리·목적에 집중</span>
+<span class="cv">sq</span> <span class="cs">"정장/수트 키워드 집중 평가 — 이전 리포트에서 F등급이 18개였던 카테고리"</span>
 <span class="cv">sq</span> <span class="cs">"OpenSearch 검색 쿼리 가중치 조정으로 카테고리 매칭 정확도 향상"</span>
-<span class="cv">sq</span> <span class="cs">"검색 결과 0건 비율 개선 — step 파라미터 및 limit 수정"</span>
-<span class="cv">sq</span> <span class="cs">"40~50대 남성 의류 키워드 300개 검색 품질 스모크 테스트"</span></div>
+<span class="cv">sq</span> <span class="cs">"검색 결과 0건 비율 개선 — step 파라미터 및 limit 수정"</span></div>
 
     <div style="margin-top:16px;">
       <div class="summary-box">
         <div class="s-title">핵심 특징</div>
         <ul class="summary-list">
+          <li>인자 없이 <code>sq</code>만 입력하면 "40~50대 남성 패션 키워드 505개 검색 품질 평가" 자동 실행 — 범위 지정 시 <code>sq "..."</code>로 덮어쓰기 가능</li>
+          <li>리포트는 <strong>실행한 현재 폴더</strong>에 저장 — 해당 폴더의 git 레포에 함께 커밋/푸시됨 (<code>~/development/search-quality/</code>에서 실행 시 search-quality-log에, danble-backend에서 실행 시 해당 레포에)</li>
           <li>요청 내용에 따라 Architect가 필요한 에이전트만 자동 선택</li>
           <li>브랜치 생성 → 중간 커밋 → PR 생성이 모든 실행에서 자동으로 보장</li>
           <li>Wave A(분석/실행) → Wave B(평가/보고) 순차 실행 — 데이터 수집 완료 후 점수·리포트 생성</li>

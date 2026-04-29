@@ -657,8 +657,8 @@ EOF</div>
           <tr><td>🔎 opensearch</td><td><span class="badge badge-blue">Wave A</span></td><td>OpenSearch 쿼리 DSL, boost/weight 최적화, 인덱스 매핑 검토</td></tr>
           <tr><td>🔌 api</td><td><span class="badge badge-blue">Wave A</span></td><td>검색 API 파라미터 분석, 스크립트 수정, 응답 파싱 검증</td></tr>
           <tr><td>🏃 runner</td><td><span class="badge badge-blue">Wave A</span></td><td>자동 검색 실행, 50개 단위 배치, JSON 결과 즉시 저장</td></tr>
-          <tr><td>📊 scorer</td><td><span class="badge badge-green">Wave B</span></td><td>100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분</td></tr>
-          <tr><td>📝 reporter</td><td><span class="badge badge-green">Wave B</span></td><td>MD/CSV 리포트 생성, 스크린샷 수집, 결과 문서화</td></tr>
+          <tr><td>📊 scorer</td><td><span class="badge badge-green">Wave B</span></td><td>100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분. 평가 항목: 결과존재·이중의도·관련성·상위노출·가격대·유사어/사전 커버리지</td></tr>
+          <tr><td>📝 reporter</td><td><span class="badge badge-green">Wave B</span></td><td><code>search-quality-report.md</code> · <code>search-quality-detail.md</code> · <code>search-quality-detail.csv</code> → <code>~/development/search-quality/</code> 저장</td></tr>
         </tbody>
       </table>
 
@@ -938,8 +938,12 @@ EOF</div>
 <span class="cm"># 2. tmux 세션 시작 (패널 분할을 위해 필수)</span>
 <span class="cv">tmux</span> new-session -s sq-work
 
-<span class="cm"># 3. sq 실행</span>
-<span class="cv">sq</span> <span class="cs">"검색 품질 개선 내용을 자연어로 설명"</span></div>
+<span class="cm"># 3-A. 기본 실행 — 인자 없이 sq만 입력</span>
+<span class="cv">sq</span>   <span class="cm"># → "40~50대 남성 패션 키워드 505개 검색 품질 평가" 자동 실행</span>
+
+<span class="cm"># 3-B. 범위 지정 실행 — 특정 카테고리·목적에 집중</span>
+<span class="cv">sq</span> <span class="cs">"정장/수트 키워드 집중 평가 — 이전 리포트에서 F등급이 18개였던 카테고리"</span>
+<span class="cv">sq</span> <span class="cs">"OpenSearch 검색 쿼리 가중치 조정 — 카테고리 매칭 정확도 향상"</span></div>
       </div>
 
       <h3>요청 유형별 자동 에이전트 선택</h3>
@@ -948,6 +952,16 @@ EOF</div>
           <tr><th>요청 예시</th><th>선택 에이전트</th><th>Wave 구성</th></tr>
         </thead>
         <tbody>
+          <tr style="background:#f0fdf4;">
+            <td><code>sq</code> <span style="font-size:11px;color:#6b7280;">(인자 없음 — 기본값)</span></td>
+            <td>🏃 runner + 📊 scorer + 📝 reporter</td>
+            <td>A: 1개 · B: 2개</td>
+          </tr>
+          <tr>
+            <td><code>"정장/수트 키워드 집중 평가"</code></td>
+            <td>🏃 runner + 📊 scorer + 📝 reporter</td>
+            <td>A: 1개 · B: 2개</td>
+          </tr>
           <tr>
             <td><code>"OpenSearch 쿼리 가중치 조정"</code></td>
             <td>🔎 opensearch + 📊 scorer + 📝 reporter</td>
@@ -957,11 +971,6 @@ EOF</div>
             <td><code>"API 파라미터 수정 및 리포트"</code></td>
             <td>🔌 api + 📝 reporter</td>
             <td>A: 1개 · B: 1개</td>
-          </tr>
-          <tr>
-            <td><code>"키워드 300개 검색 품질 스모크 테스트"</code></td>
-            <td>🏃 runner + 📊 scorer + 📝 reporter</td>
-            <td>A: 1개 · B: 2개</td>
           </tr>
           <tr>
             <td><code>"검색 0건 비율 개선 전체 분석"</code></td>
