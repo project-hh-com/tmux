@@ -112,9 +112,9 @@ fi
 # ── Step 3: DB 연결 테스트 ────────────────────────────────────
 echo ""
 echo "3/4  danble DB 연결 테스트..."
-DB_TEST_RESULT=$(PGPASSWORD="${PGPASSWORD}" psql \
+DB_TEST_RESULT=$(PGPASSWORD="${PGPASSWORD}" PGCONNECT_TIMEOUT=15 psql \
   -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" \
-  --no-password --connect-timeout=15 \
+  --no-password \
   -c "SELECT COUNT(*) AS keyword_count FROM search_keywords LIMIT 1;" \
   -t 2>&1 || true)
 
