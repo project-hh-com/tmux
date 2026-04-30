@@ -740,7 +740,7 @@
           <div class="agent-emoji">🏃</div>
           <div class="agent-name">runner</div>
           <div class="agent-wave wave-a">Wave A</div>
-          <div class="agent-desc">자동 검색 실행, 50개 단위 배치, JSON 결과 즉시 저장. <strong>DB:</strong> search_keywords rank 순 키워드 리스트 추출</div>
+          <div class="agent-desc">키워드 500개(웹 250 + DB 250) 수집 후 자동 검색 실행, 배치 데이터 저장. 웹 키워드는 아이템·브랜드·상황·소재 등 6가지 패턴으로 수집 — 성별 수식어 강제 금지, danble 검색창 실제 입력 패턴 기준. <strong>DB:</strong> search_keywords rank 순 키워드 추출</div>
         </div>
         <div class="agent-card">
           <div class="agent-emoji">📊</div>
@@ -1094,7 +1094,7 @@
 <span class="ck">tmux new-session</span> -s work
 
 <span class="cm"># 기본 실행 — 인자 없이 sq만 입력하면 기본 평가 자동 실행</span>
-<span class="cv">sq</span>   <span class="cm">← "40~50대 남성 패션 키워드 500개 검색 품질 평가" 자동 적용</span>
+<span class="cv">sq</span>   <span class="cm">← "danble 패션 키워드 500개 검색 품질 평가" 자동 적용</span>
 
 <span class="cm"># 범위 지정 실행 — 특정 카테고리·목적에 집중</span>
 <span class="cv">sq</span> <span class="cs">"정장/수트 키워드 집중 평가 — 이전 리포트에서 F등급이 18개였던 카테고리"</span>
@@ -1105,11 +1105,11 @@
       <div class="summary-box">
         <div class="s-title">핵심 특징</div>
         <ul class="summary-list">
-          <li>인자 없이 <code>sq</code>만 입력하면 "40~50대 남성 패션 키워드 500개 검색 품질 평가" 자동 실행 — 범위 지정 시 <code>sq "..."</code>로 덮어쓰기 가능</li>
+          <li>인자 없이 <code>sq</code>만 입력하면 "danble 패션 키워드 500개 검색 품질 평가" 자동 실행 — 범위 지정 시 <code>sq "..."</code>로 덮어쓰기 가능</li>
           <li>리포트는 <code>docs/reports/sq-{timestamp}/</code>에 저장 — 실행한 현재 폴더 기준 (예: <code>~/development/danble/search-quality/docs/reports/sq-20260429-172913/</code>). 해당 폴더의 git 레포에 함께 커밋/푸시됨</li>
           <li>요청 내용에 따라 Architect가 필요한 에이전트만 자동 선택</li>
           <li>브랜치 생성 → 중간 커밋 → PR 생성이 모든 실행에서 자동으로 보장</li>
-          <li>Wave A(분석/실행) → Wave B(평가/보고) 순차 실행 — 데이터 수집 완료 후 점수·리포트 생성</li>
+          <li>Wave A(분석/실행) → Wave B(채점) → Wave C(보고) 순차 실행 — scores.json 완성 후 reporter 시작</li>
           <li>Debate 2에서 REWORK 판정 시 Wave를 횟수 제한 없이 재실행</li>
           <li>게이트 실패해도 Draft PR 자동 생성 — 팀에 진행 상황 공유</li>
           <li>모든 프롬프트는 파일 경로 참조 방식 — OS 인자 한도 초과 없음</li>
