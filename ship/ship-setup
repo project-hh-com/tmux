@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# ship-setup — Claude Agent Teams ship 명령어 실행 환경 셋업
+# 사용법: bash ship-setup
+#
+# 수행 작업:
+#   1. Claude Code CLI 설치 확인 / npm으로 자동 설치
+#   2. Claude Code 인증 확인
+#   3. tmux 설치 확인 / Homebrew로 자동 설치
+#   4. gh CLI 설치 확인 / Homebrew로 자동 설치
+#   5. GitHub 인증 (gh auth login)
+#   6. ~/.claude/settings.json 에 에이전트 설정 적용
+#   7. ~/.claude/agents/ 에 에이전트 정의 파일 생성
+#   8. ship 명령어를 PATH에 등록 (심볼릭 링크)
+
+set -euo pipefail
+
+SHIP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN_DIR="${HOME}/.local/bin"
+CLAUDE_DIR="${HOME}/.claude"
+AGENTS_DIR="${CLAUDE_DIR}/agents"
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🚢 ship — Claude Agent Teams 환경 셋업"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# ── Step 1: Claude Code CLI 설치 확인 ────────────────────────
+echo "1/8  Claude Code CLI 설치 확인..."
+
+if command -v claude &> /dev/null; then
+  CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1 || echo "설치됨")
+  echo "     ✅ claude 이미 설치됨: ${CLAUDE_VERSION}"
+else
+  echo "     ⚠️  Claude Code CLI 미설치 — npm으로 설치 시도..."
+  if command -v npm &> /dev/null; then
+    echo "     npm install -g @anthropic-ai/claude-code 실행 중..."
+    npm install -g @anthropic-ai/claude-code
+    echo "     ✅ Claude Code 설치 완료: $(claude --version 2>/dev/null | head -1)"
+  else
+    echo "     ❌ npm 미설치. Node.js를 먼저 설치하세요:"
+    echo "        https://nodejs.org/ 에서 LTS 버전 설치"
+    echo "        또는: brew install node"
+    exit 1
+  fi
+fi
+
+# ── Step 2: Claude Code 인증 확인 ────────────────────────────
+echo ""
+echo "2/8  Claude Code 인증 확인..."
+
+if claude --help &> /dev/null 2>&1; then
+  echo "     ✅ Claude Code 실행 가능"
+  echo "     ℹ️  인증이 필요하면 'claude' 명령어를 실행해 로그인하세요."
+else
+  echo "     ⚠️  Claude Code 실행 실패 — 'claude' 명령어로 직접 인증하세요."
+fi
+
+# ── Step 3: tmux 설치 확인 ───────────────────────────────────
+echo ""
+echo "3/8  tmux 설치 확인..."
+
+if command -v tmux &> /dev/null; then
+  TMUX_VERSION=$(tmux -V 2>/dev/null)
+  echo "     ✅ tmux 이미 설치됨: ${TMUX_VERSION}"
+else
+  echo "     ⚠️  tmux 미설치 — Homebrew로 설치 시도..."
+  if command -v brew &> /dev/null; then
+    brew install tmux
+    echo "     ✅ tmux 설치 완료: $(tmux -V)"
+  else
+    echo "     ❌ Homebrew 미설치. 수동 설치:"
+    echo "        /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    echo "        brew install tmux"
+    exit 1
+  fi
+fi
+
+# ── Step 4: gh CLI 설치 확인 ─────────────────────────────────
+echo ""
+echo "4/8  gh CLI 설치 확인..."
+
+if command -v gh &> /dev/null; then
+  GH_VERSION=$(gh --version | head -1)
+  echo "     ✅ gh 이미 설치됨: ${GH_VERSION}"
+else
+  echo "     ⚠️  gh CLI 미설치 — Homebrew로 설치 시도..."
+  if command -v brew &> /dev/null; then
+    brew install gh
+    echo "     ✅ gh 설치 완료: $(gh --version | head -1)"
+  else
+    echo "     ❌ Homebrew 미설치. 수동 설치:"
+    echo "        brew install gh"
+    exit 1
+  fi
+fi
+
+# ── Step 5: GitHub 인증 ───────────────────────────────────────
+echo ""
+echo "5/8  GitHub 인증 확인..."
+
+if gh auth status &> /dev/null 2>&1; then
+  AUTH_INFO=$(gh auth status 2>&1 | head -3)
+  echo "     ✅ 이미 인증됨"
+  echo "${AUTH_INFO}" | sed 's/^/     /'
+else
+  echo "     ⚠️  GitHub 미인증 — 로그인이 필요합니다."
+  echo ""
+  echo "     아래 명령어로 인증하세요:"
+  echo "       gh auth login"
+  echo ""
+  echo -n "     지금 인증하시겠습니까? [y/N] "
+  read -r DO_LOGIN
+  if [[ "${DO_LOGIN}" =~ ^[Yy]$ ]]; then
+    gh auth login
+    echo "     ✅ GitHub 인증 완료"
+  else
+    echo "     ⚠️  나중에 'gh auth login'을 실행하세요."
+    echo "        인증 없이는 ship이 PR을 자동 생성할 수 없습니다."
+  fi
+fi
+
+# ── Step 6: ~/.claude/settings.json 설정 ─────────────────────
+echo ""
+echo "6/8  ~/.claude/settings.json 설정..."
+
+mkdir -p "${CLAUDE_DIR}"
+
+SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
+
+if [[ -f "${SETTINGS_FILE}" ]]; then
+  echo "     ℹ️  기존 settings.json 발견 — 내용 확인 중..."
+  cat "${SETTINGS_FILE}"
+  echo ""
+  echo "     ⚠️  기존 파일을 유지합니다. 필요 시 수동으로 아래 항목을 추가하세요:"
+  echo "     \"dangerouslySkipPermissions\": true"
+else
+  echo "     📝 settings.json 새로 생성 중..."
+  cat > "${SETTINGS_FILE}" << 'SETTINGSEOF'
+{
+  "dangerouslySkipPermissions": true
+}
+SETTINGSEOF
+  echo "     ✅ settings.json 생성 완료: ${SETTINGS_FILE}"
+fi
+
+# ── Step 7: ~/.claude/agents/ 에이전트 정의 파일 생성 ─────────
+echo ""
+echo "7/8  ~/.claude/agents/ 에이전트 정의 파일 생성..."
+
+mkdir -p "${AGENTS_DIR}"
+
+declare -A AGENTS
+AGENTS[backend]="API Route Handler, 서비스 레이어, Django ORM, Zod 검증 등 백엔드 구현을 담당합니다. services/→types/ 단방향 import만 허용. N+1 쿼리 방지를 위해 select_related/prefetch_related 반드시 사용."
+AGENTS[frontend]="React 컴포넌트(PascalCase.tsx), TanStack Query, Tailwind CSS 구현을 담당합니다. components/→hooks/→lib/→services/ 레이어 규칙 준수."
+AGENTS[test]="Vitest + Testing Library 단위/통합 테스트를 작성합니다. 커버리지 80% 이상 필수. Wave A(구현) 완료 후 실행되므로 현재 코드베이스 기준으로 테스트를 작성하세요."
+AGENTS[debugger]="경쟁 가설 방식으로 버그 원인을 분석하고 수정합니다. 재현 단계를 먼저 확인한 후 가설을 검증하세요."
+AGENTS[reviewer]="Wave A(구현) 에이전트들이 작성한 코드를 리뷰합니다. 가독성, 타입 안전성, 레이어 규칙 위반, 중복 코드를 검토하세요."
+AGENTS[security]="Wave A(구현) 에이전트들이 작성한 코드를 보안 관점에서 검토합니다. OWASP Top 10, 인증/인가, 시크릿 노출, SQL 인젝션을 확인하세요."
+
+for AGENT_NAME in "${!AGENTS[@]}"; do
+  AGENT_FILE="${AGENTS_DIR}/${AGENT_NAME}.md"
+  if [[ -f "${AGENT_FILE}" ]]; then
+    echo "     ↩️  ${AGENT_NAME}.md 이미 존재 — 스킵"
+  else
+    cat > "${AGENT_FILE}" << AGENTEOF
+# ${AGENT_NAME} 에이전트
+
+## 역할
+
+${AGENTS[$AGENT_NAME]}
+
+## 완료 조건
+
+- 맡은 역할의 모든 작업을 완료했을 것
+- 작업 완료 후 반드시 touch \${DONE_FILE} 실행 (ship 워크플로에서 자동 전달됨)
+AGENTEOF
+    echo "     ✅ ${AGENT_NAME}.md 생성: ${AGENT_FILE}"
+  fi
+done
+
+# ── Step 8: ship 명령어 PATH 등록 ────────────────────────────
+echo ""
+echo "8/8  ship 명령어 PATH 등록..."
+
+mkdir -p "${BIN_DIR}"
+
+SHIP_SCRIPT="${SHIP_DIR}/ship"
+SHIP_LINK="${BIN_DIR}/ship"
+
+if [[ ! -f "${SHIP_SCRIPT}" ]]; then
+  echo "     ❌ ship 스크립트 없음: ${SHIP_SCRIPT}"
+  exit 1
+fi
+
+chmod +x "${SHIP_SCRIPT}"
+[[ -L "${SHIP_LINK}" ]] && rm "${SHIP_LINK}"
+[[ -f "${SHIP_LINK}" ]] && rm "${SHIP_LINK}"
+ln -s "${SHIP_SCRIPT}" "${SHIP_LINK}"
+echo "     ✅ 심볼릭 링크: ${SHIP_LINK} → ${SHIP_SCRIPT}"
+
+SHELL_RC="${HOME}/.zshrc"
+[[ -f "${HOME}/.bashrc" ]] && SHELL_RC="${HOME}/.bashrc"
+
+if [[ ! ":$PATH:" == *":${BIN_DIR}:"* ]]; then
+  echo "" >> "${SHELL_RC}"
+  echo "# ship PATH — ship-setup 추가" >> "${SHELL_RC}"
+  echo "export PATH=\"${BIN_DIR}:\$PATH\"" >> "${SHELL_RC}"
+  echo "     ${SHELL_RC} 에 PATH 추가됨 → 새 터미널 또는 'source ${SHELL_RC}' 실행 필요"
+else
+  echo "     ✅ ${BIN_DIR} 이미 PATH에 있음"
+fi
+
+# ── 완료 ─────────────────────────────────────────────────────
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ✅ ship 환경 셋업 완료!"
+echo ""
+echo "  기본 사용법 (프로젝트 디렉토리에서 실행):"
+echo "    ship \"로그인 시 이름/전화번호 저장 버그 수정\""
+echo "    ship \"결제 완료 화면 구현 및 API 연동\""
+echo "    ship \"상품 검색 필터 성능 개선\""
+echo ""
+echo "  ship 실행 흐름:"
+echo "    Phase 1: Architect — 계획 수립 + 에이전트 선택"
+echo "    Debate 1: Red/Blue/Judge — 설계 계획 검토"
+echo "    Phase 3: Wave A(구현) + Wave B(검증) 병렬 실행"
+echo "    Debate 2: Red/Blue/Judge — 구현 결과 검토"
+echo "    Phase 4: CI 게이트 (tsc → eslint → test → build)"
+echo "    Phase 5: 자동 수정 루프 (실패 시 최대 3회)"
+echo "    Phase 6: Release Manager — PR 자동 생성"
+echo ""
+echo "  tmux 사용 시 Wave 에이전트들이 나란히 실행됩니다:"
+echo "    [Plan] | [Wave A 에이전트들] | [Wave B 에이전트들]"
+echo ""
+echo "  PR 생성 후 CI 통과 시:"
+echo "    gh pr ready     # Draft → Ready for Review"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""

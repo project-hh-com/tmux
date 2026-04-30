@@ -11,10 +11,14 @@
             "id": "15eb6b80019ddbd7",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "sq-fix/sq-fix-design.md",
+                "mode": "preview",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "새 탭"
+              "title": "sq-fix-design"
             }
           }
         ]
@@ -179,15 +183,24 @@
       "bases:새 베이스 생성하기": false
     }
   },
-  "active": "0677ba420890c1e6",
+  "active": "15eb6b80019ddbd7",
   "lastOpenFiles": [
+    "ship/ship-setup",
+    "sq/ship-overview.html",
+    "sq/sq-v1-vs-v2.md",
+    "sq/ship-setup",
+    "sq/ship",
+    "README.md",
+    "sq/sq-v2-setup",
+    "sq/reporter-v2",
+    "sq-fix/PLAN.md",
+    "sq/sq-v2",
+    "sq/sq-fix-design.md",
     "sq-fix/sq-fix-design.md",
     "sq-fix",
     "history.jsonl 복사본",
     "history.jsonl",
     "changelog 복사본.md",
-    "sq/sq-fix-design.md",
-    "sq/opensearch-analysis.md",
-    "README.md"
+    "sq/opensearch-analysis.md"
   ]
 }
