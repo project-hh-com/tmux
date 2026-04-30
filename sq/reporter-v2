@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# reporter-v2 — Search Quality 리포트 생성기 (v2 점수 체계)
+#
+# sq-v2에서 Wave C 에이전트로 호출됩니다.
+# 독립 실행도 가능: reporter-v2 <FLAG_DIR> <SQ_OUTPUT_DIR> <FEATURE>
+#
+# 사용법 (독립 실행):
+#   FLAG_DIR=".agent/sq-v2-20260430-XXXXXX" \
+#   SQ_OUTPUT_DIR="docs/reports/sq-v2-20260430-XXXXXX" \
+#   FEATURE="40~50대 남성 패션" \
+#   reporter-v2
+
+set -euo pipefail
+
+# ── 인자 / 환경변수 처리 ──────────────────────────────────────
+FLAG_DIR="${FLAG_DIR:-${1:-}}"
+SQ_OUTPUT_DIR="${SQ_OUTPUT_DIR:-${2:-}}"
+FEATURE="${FEATURE:-${3:-검색 품질 평가}}"
+
+if [[ -z "$FLAG_DIR" || -z "$SQ_OUTPUT_DIR" ]]; then
+  echo "❌ FLAG_DIR 또는 SQ_OUTPUT_DIR이 설정되지 않았습니다."
+  echo "   환경변수로 전달하거나 인자로 넘겨주세요."
+  echo "   예: FLAG_DIR=.agent/sq-v2-XXXX SQ_OUTPUT_DIR=docs/reports/sq-v2-XXXX reporter-v2"
+  exit 1
+fi
+
+if [[ ! -f "${FLAG_DIR}/scores.json" ]]; then
+  echo "❌ scores.json을 찾을 수 없습니다: ${FLAG_DIR}/scores.json"
+  echo "   scorer v2가 먼저 완료되어야 합니다."
+  exit 1
+fi
+
+mkdir -p "${SQ_OUTPUT_DIR}"
+
+# ── DB 환경변수 로드 ─────────────────────────────────────────
+SQ_DB_ENV="${HOME}/.config/sq/db.env"
+if [[ -f "${SQ_DB_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  source "${SQ_DB_ENV}"
+fi
+PGHOST="${PGHOST:-}"
+PGDATABASE="${PGDATABASE:-danble}"
+PGUSER="${PGUSER:-danble_read_only}"
+PGPASSWORD="${PGPASSWORD:-}"
+PGPORT="${PGPORT:-5432}"
+PGSSLMODE="${PGSSLMODE:-require}"
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+
+# ── 프롬프트 생성 ────────────────────────────────────────────
+PROMPT_FILE="${FLAG_DIR}/prompt_reporter_v2.txt"
+DONE_FILE="${FLAG_DIR}/reporter.done"
+
+cat > "${PROMPT_FILE}" << REPORTERPROMPT
+당신은 reporter 에이전트입니다 (v2). scorer v2가 생성한 ${FLAG_DIR}/scores.json 을 읽어 검색 품질 리포트를 생성하세요.
+
+## ⛔ 절대 금지 사항 — 반드시 먼저 읽으세요
+
+1. **독립 채점 금지** — scores.json이 유일한 채점 소스입니다. LLM이 직접 점수를 새로 계산하거나 재산정하지 마세요.
+2. **독립 Python 스크립트 생성 금지** — 별도 스크립트를 만들어 scores.json을 재처리하는 방식 금지.
+3. **점수 수정 금지** — scores.json에 있는 점수·등급·관련성 비율·진단 값을 절대 변경하지 마세요. 집계·포매팅·시각화만 수행합니다.
+4. **이중 채점 금지** — 리포트 생성 과정에서 상품 관련성을 다시 판단하거나 점수를 새로 부여하지 마세요.
+
+## ⚠️ 집계 시 반드시 segment를 분리하세요 (v2 기준)
+
+- **GENERAL**: 정상 검색 결과 키워드 → 핵심 품질 지표에 사용
+- **POSSIBLE_FALLBACK**: 엔터티 발골 실패 의심 + 광범위 결과 → 별도 집계, 평균 점수에 포함 (F강제 아님)
+- **ZERO_RESULT**: 결과 0건 키워드 → 별도 집계, 평균 점수에서 제외
+
+평균 점수, 등급 분포는 GENERAL + POSSIBLE_FALLBACK 포함으로 계산합니다.
+(v1의 FALLBACK은 F강제였지만 v2의 POSSIBLE_FALLBACK은 정상 채점됨)
+ZERO_RESULT만 평균에서 제외합니다.
+
+## ⚠️ v2 diagnosis_codes 집계
+
+scores.json의 diagnosis_codes 배열에서 코드별 건수를 집계하세요:
+ZERO_UNRECOGNIZED / ZERO_NO_MATCH / POSSIBLE_FALLBACK / ETC_TYPE /
+BRAND_MAPPING_WRONG / CATEGORY_MAPPING_WRONG / LOW_RELEVANCE /
+POOR_RANKING / NO_SYNONYM / SOLDOUT_EXPOSED
+
+---
+
+### 1. search-quality-report.md (요약 리포트)
+
+\`\`\`markdown
+# 검색 품질 QA 리포트 (v2) — ${FEATURE}
+평가일: {날짜} | 키워드: {N}개 | API: GET /api/v1/search/product-results?page=1&limit=50&query={kw}
+점수 체계: v2 (100점 / 6항목: 결과존재성10+검색범위적절성15+의도파악정확도20+결과관련성30+상위노출품질20+품절노출5)
+
+## 0. 세그먼트 요약
+| 세그먼트 | 건수 | 비율 | 설명 |
+|---------|------|------|------|
+| GENERAL | N | N% | 정상 검색 결과 |
+| POSSIBLE_FALLBACK | N | N% | 엔터티 발골 실패 의심 (채점 계속됨) |
+| ZERO_RESULT | N | N% | 결과 0건 (UNRECOGNIZED: N / NO_MATCH: N) |
+
+## 1. GENERAL + POSSIBLE_FALLBACK 품질 지표
+평균 점수: N/100
+| 지표 | 값 |
+|-----|-----|
+| 결과 관련성 비율 (평균) | N% |
+| 의도 파악 80%+ 키워드 | N개 (N%) |
+| 품절 상품 30% 초과 키워드 | N개 (N%) |
+| 사전 등록 키워드 | N개 (N%) |
+
+## 2. 등급 분포 (GENERAL + POSSIBLE_FALLBACK)
+A / B / C / D / F 건수·비율·ASCII 막대
+
+## 3. ZERO_RESULT 키워드 목록 (N건)
+| 키워드 | 하위 분류 | 진단 |
+|--------|---------|------|
+(ZERO_UNRECOGNIZED와 ZERO_NO_MATCH를 구분하여 나열)
+
+## 4. POSSIBLE_FALLBACK 키워드 목록 (N건)
+| 키워드 | total_count | 점수 | 등급 |
+|--------|-----------|------|------|
+
+## 5. 핵심 문제 진단 (diagnosis_codes 기준)
+diagnosis_codes 코드별 건수 내림차순:
+- ZERO_UNRECOGNIZED: N건 → 권장 조치: search_keywords INSERT
+- ZERO_NO_MATCH: N건 → 권장 조치: 매핑 확인 or 유사어 추가
+- POSSIBLE_FALLBACK: N건 → 권장 조치: search_category_keywords INSERT
+- ETC_TYPE: N건 → 권장 조치: keyword_type UPDATE + 발골 사전 추가
+- BRAND_MAPPING_WRONG: N건 → 권장 조치: search_brand_keywords brand_id 확인
+- CATEGORY_MAPPING_WRONG: N건 → 권장 조치: search_category_keywords 값 확인
+- LOW_RELEVANCE: N건 → 권장 조치: 쿼리 토크나이징 활성화, min_score 조정
+- POOR_RANKING: N건 → 권장 조치: ranking 점수 로직 검토
+- NO_SYNONYM: N건 → 권장 조치: search_keyword_relations INSERT
+- SOLDOUT_EXPOSED: N건 → 권장 조치: is_sold_out OpenSearch 필터 추가
+(각 코드별 예시 키워드 3개 포함)
+
+## 6. 개선 우선순위 로드맵
+| 우선순위 | diagnosis_code | 영향 키워드 수 | 난이도 | 예상 효과 |
+\`\`\`
+
+---
+
+### 2. search-quality-detail.md (상세)
+
+전체 키워드를 segment 섹션별로 분리해서 아래 테이블 형식으로 작성:
+| 키워드 | source | 결과수 | total_count | 점수 | 등급 | 관련성 | 의도파악 | 상위노출 | 품절율 | query_type | diagnosis_codes |
+
+---
+
+### 3. search-quality-detail.csv (CSV 전체)
+
+헤더 (v2):
+keyword,source,segment,result_count,total_count,score,grade,breakdown_결과존재성,breakdown_검색범위적절성,breakdown_의도파악정확도,breakdown_결과관련성,breakdown_상위노출품질,breakdown_품절노출,relevance_ratio,soldout_rate,in_keyword_dict,keyword_type,has_category,has_brand,has_color,same_relation_count,similar_relation_count,query_type,diagnosis_codes,diagnosis
+
+전체 키워드, 헤더 포함. diagnosis_codes는 세미콜론(;)으로 구분하여 단일 셀에 기록.
+
+---
+
+저장 경로: ${SQ_OUTPUT_DIR}/
+3개 파일 모두 ${SQ_OUTPUT_DIR}/ 에 저장하세요.
+
+작업 완료 후 반드시 실행: touch ${DONE_FILE}
+REPORTERPROMPT
+
+echo "📝 reporter-v2 시작..."
+claude -p "$(cat "${PROMPT_FILE}")" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions
