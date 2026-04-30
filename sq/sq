@@ -737,16 +737,18 @@ done < "${FLAG_DIR}/agents.txt"
 echo ""
 echo "⏩ 자동 승인 → Phase 3 시작"
 echo ""
-echo "🔍 Phase 3: 에이전트 2-웨이브 실행"
+echo "🔍 Phase 3: 에이전트 3-웨이브 실행"
 echo "   Wave A (분석/실행): opensearch · api · runner"
-echo "   Wave B (평가/보고): scorer · reporter  ← Wave A 완료 후 시작"
+echo "   Wave B (채점):      scorer              ← Wave A 완료 후 시작"
+echo "   Wave C (보고):      reporter            ← Wave B 완료 후 시작"
 echo ""
 
 CWD=$(pwd)
 
 # ── 에이전트 스크립트 생성 + 웨이브 분류 ───────────────────
 > "${FLAG_DIR}/agents_wave_a.txt"   # 분석/실행: opensearch, api, runner
-> "${FLAG_DIR}/agents_wave_b.txt"   # 평가/보고: scorer, reporter
+> "${FLAG_DIR}/agents_wave_b.txt"   # 채점: scorer
+> "${FLAG_DIR}/agents_wave_c.txt"   # 보고: reporter  (scorer 완료 후 실행)
 
 IDX=0
 while IFS='|' read -r AGENT_NAME AGENT_TASK; do
@@ -1278,8 +1280,10 @@ SCRIPTEOF
   case "$AGENT_NAME" in
     opensearch|api|runner)
       echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_a.txt" ;;
-    scorer|reporter)
+    scorer)
       echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_b.txt" ;;
+    reporter)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_c.txt" ;;
     *)
       echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_a.txt" ;;
   esac
@@ -1326,6 +1330,9 @@ while true; do
     while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
       rm -f "${FLAG_DIR}/${AGENT_NAME}.done"
     done < "${FLAG_DIR}/agents_wave_b.txt"
+    while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+      rm -f "${FLAG_DIR}/${AGENT_NAME}.done"
+    done < "${FLAG_DIR}/agents_wave_c.txt"
     > "$PANE_ID_FILE"
     LAST_WAVE_ANCHOR_PANE=""   # REWORK 시 레이아웃 앵커 초기화
   fi
@@ -1343,19 +1350,37 @@ while true; do
     if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
       echo ""
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      echo "  ✅ Wave A 완료 → Wave B (평가/보고) 시작"
+      echo "  ✅ Wave A 완료 → Wave B (채점) 시작"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
-      launch_wave_tmux "${FLAG_DIR}/agents_wave_b.txt" "Wave B (평가/보고)"
+      launch_wave_tmux "${FLAG_DIR}/agents_wave_b.txt" "Wave B (채점)"
       wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
-      cleanup_wave    # A + B 모두 정리
-      echo "  🧹 Wave A+B 패널 정리 완료"
+      echo "  ✅ Wave B 완료"
       tl "⚡ Wave B | ✅ 완료"
-      auto_commit "sq" "평가"
+      auto_commit "sq" "채점"
       tl "💾 커밋 | Wave B"
+    fi
+
+    if [[ -s "${FLAG_DIR}/agents_wave_c.txt" ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  ✅ Wave B 완료 → Wave C (보고) 시작"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      launch_wave_tmux "${FLAG_DIR}/agents_wave_c.txt" "Wave C (보고)"
+      wait_wave "${FLAG_DIR}/agents_wave_c.txt" "Wave C"
+      cleanup_wave    # A + B + C 모두 정리
+      echo "  🧹 Wave A+B+C 패널 정리 완료"
+      tl "⚡ Wave C | ✅ 완료"
+      auto_commit "sq" "평가"
+      tl "💾 커밋 | Wave C"
+      snapshot_after
+    elif [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
+      cleanup_wave    # B까지만 정리
+      echo "  🧹 Wave A+B 패널 정리 완료"
       snapshot_after
     else
-      cleanup_wave    # Wave B 없으면 A만 정리
+      cleanup_wave    # Wave B/C 없으면 A만 정리
       echo "  🧹 Wave A 패널 정리 완료"
       snapshot_after
     fi
@@ -1382,10 +1407,10 @@ while true; do
     if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
       echo ""
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      echo "  ✅ Wave A 완료 → Wave B (평가/보고) 시작"
+      echo "  ✅ Wave A 완료 → Wave B (채점) 시작"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
-      echo "  ▶ Wave B (평가/보고) 시작..."
+      echo "  ▶ Wave B (채점) 시작..."
       while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
         SESSION="sq-${AGENT_NAME}"
         tmux kill-session -t "$SESSION" 2>/dev/null || true
@@ -1395,6 +1420,26 @@ while true; do
         echo "  tmux attach -t ${SESSION}"
       done < "${FLAG_DIR}/agents_wave_b.txt"
       wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
+      cleanup_wave
+      auto_commit "sq" "채점"
+    fi
+
+    if [[ -s "${FLAG_DIR}/agents_wave_c.txt" ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  ✅ Wave B 완료 → Wave C (보고) 시작"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      echo "  ▶ Wave C (보고) 시작..."
+      while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+        SESSION="sq-${AGENT_NAME}"
+        tmux kill-session -t "$SESSION" 2>/dev/null || true
+        tmux new-session -d -s "$SESSION" -c "$CWD"
+        tmux send-keys -t "$SESSION" "bash '${AGENT_SCRIPT}'" Enter
+        echo "$SESSION" >> "$SESSION_LIST_FILE"
+        echo "  tmux attach -t ${SESSION}"
+      done < "${FLAG_DIR}/agents_wave_c.txt"
+      wait_wave "${FLAG_DIR}/agents_wave_c.txt" "Wave C"
       cleanup_wave
       auto_commit "sq" "평가"
       snapshot_after
