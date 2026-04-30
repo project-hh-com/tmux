@@ -806,13 +806,20 @@ def fetch_with_retry(url, kw, max_retry=3):
     for attempt in range(max_retry):
         try:
             res = json.loads(urllib.request.urlopen(url, timeout=10).read())
-            items = res.get('data', {}).get('items', [])
+            data = res.get('data', {})
+            items = data.get('items', [])
+            rq = data.get('result_query', {})
             return {
                 'keyword': kw,
                 'result_count': len(items),
-                'total_count': res.get('data', {}).get('total_count', 0),
+                'total_count': data.get('total_count', 0),
                 'product_ids': [x.get('product_display_id') for x in items],
                 'brands': [x.get('brand', {}).get('label', '') for x in items],
+                'brands_kor': [x.get('brand', {}).get('label_kor', '') for x in items],
+                'extracted_brands': rq.get('extracted_brands', []),
+                'extracted_colors': rq.get('extracted_colors', []),
+                'extracted_categories': rq.get('extracted_categories', []),
+                'remaining_keyword': rq.get('remaining_keyword', ''),
                 'error': None
             }, None
         except urllib.error.HTTPError as e:
@@ -891,18 +898,27 @@ SQ_ROLE_EOF
 
 ## ⚠️ STEP 0 — 폴백 감지 (최우선, 반드시 먼저 실행)
 
-danble 검색 API는 키워드가 매칭되지 않으면 **전체 상품을 반환(폴백)**합니다.
-이 경우 result_count는 크지만 실제로는 검색 실패입니다.
+danble 검색 API는 Tier 1(원본+동의어) 검색이 0건이면 **Tier 2(유사어 확장) 검색으로 폴백**합니다.
+이 경우 result_count는 크지만 실제로는 검색 의도와 무관한 상품이 반환됩니다.
 
-**폴백 판정 기준 (하나라도 해당하면 폴백):**
-1. total_count > 3000
-2. JSON에 is_fallback=true 필드가 존재
+**폴백 판정 기준 — 아래 순서로 확인:**
+
+**[우선] result_query 필드가 있는 경우:**
+- extracted_brands, extracted_colors, extracted_categories 중 하나라도 있음
+  → **FALLBACK 아님** (시스템이 entity filter를 적용해 Tier 1 성공 보장)
+- 셋 다 비어있음 AND total_count > 1000
+  → **FALLBACK** (entity 미인식 + 광범위한 결과 = Tier 2 발동)
+- 셋 다 비어있음 AND total_count ≤ 1000
+  → FALLBACK 아님 (텍스트 검색이나 결과 좁음)
+
+**[대체] result_query 필드가 없는 경우:**
+- total_count > 3000 → **FALLBACK**
 
 **폴백 확정 시 → 즉시 아래로 채점 종료:**
 - 모든 점수 항목 0점
 - grade = "F"
 - segment = "FALLBACK"
-- diagnosis = "폴백 반환 — 검색 매칭 실패, 전체 상품 노출됨"
+- diagnosis = "폴백 반환 — 검색 매칭 실패, 유사어 확장 검색(Tier 2) 결과 반환됨"
 - STEP 1~6 건너뜀
 
 ---
@@ -922,10 +938,11 @@ result_count > 0 이고 폴백이 아닌 경우에만 실행.
 아래 쿼리를 순서대로 실행하세요:
 
 \`\`\`sql
--- [A] 키워드 사전 등록 여부
+-- [A] 키워드 사전 등록 여부 (대소문자 무관)
 SELECT id, keyword, keyword_type, result_product_count
 FROM search_keywords
-WHERE keyword = '{{KW}}' OR normalized_keyword = '{{KW}}'
+WHERE LOWER(keyword) = LOWER('{{KW}}')
+   OR LOWER(normalized_keyword) = LOWER('{{KW}}')
 LIMIT 1;
 
 -- [B] 이중 의도 확인 (keyword_id를 [A]에서 획득한 값으로 치환)
@@ -939,7 +956,8 @@ FROM search_keyword_relations
 WHERE source_keyword_id = {{KW_ID}} AND relation_score > 0
 GROUP BY relation_type;
 
--- [D] 상품 품절률 (product_ids는 JSON에서 추출한 배열)
+-- [D] 상품 품절률
+-- product_ids: JSON의 product_ids 배열 (runner가 items[*].product_display_id를 저장한 값)
 SELECT
   COUNT(*) FILTER (WHERE is_sold_out = true) AS soldout_count,
   COUNT(*) AS total_count
@@ -948,7 +966,7 @@ WHERE id = ANY(ARRAY[{{PRODUCT_IDS}}]::bigint[]);
 \`\`\`
 
 ⚠️ keyword_id를 얻지 못하면 [B][C]는 건너뜁니다 (has_category=false, has_brand=false, 관계수=0으로 처리).
-⚠️ product_ids가 비어있으면 [D]는 건너뜁니다 (soldout_rate=null로 기록).
+⚠️ product_ids 추출: JSON의 \`product_ids\` 배열을 읽으세요. runner가 각 상품의 \`product_display_id\`를 이 배열로 저장합니다. 비어있으면 [D]는 건너뜁니다 (soldout_rate=null로 기록).
 
 ---
 
@@ -964,14 +982,40 @@ WHERE id = ANY(ARRAY[{{PRODUCT_IDS}}]::bigint[]);
 
 **⚠️ 관련성 판단은 반드시 LLM(당신 자신)이 직접 내립니다. 문자열 매칭 코드 작성 금지.**
 
-상위 min(result_count, 10)개 상품 각각에 대해 아래 판단을 당신이 직접 수행:
-- 이 상품(상품명·브랜드·카테고리 정보)이 검색 키워드의 의도에 적절한가?
-- Y(관련 있음) / N(관련 없음) — 판단이 모호하면 Y
+상위 min(result_count, 10)개 상품 각각에 대해 아래 순서로 Y/N을 당신이 직접 판단:
 
-판단 기준 (하나라도 해당하면 Y):
+**[판단 순서]**
+
+**① extracted_brands가 있는 경우 (runner JSON에서 확인)**
+- 시스템이 브랜드 entity filter를 적용해 반환한 상품 → 전부 Y
+- 별도 상품별 판단 불필요, relevance_ratio = 1.0
+
+**② 검색 의도 파악 후 시맨틱 판단 (extract_brands 없는 경우)**
+먼저 키워드의 **검색 의도**를 파악한다:
+- "40대 남자 코디" → 중장년 남성 일상 코디에 맞는 의류
+- "비즈니스캐주얼" → 사무실 착용 가능한 남성 세미포멀 의류
+- "중년 골프룩" → 중년 남성 골프 의류
+- "아버지 생신 선물" → 중년 남성이 받을 만한 의류·잡화
+
+그 다음 상품이 의도를 충족하는지 판단:
+- 대상 고객층·카테고리가 맞으면 Y
+- 성별·연령대가 명백히 다르면 N (예: 여성복, 아동복)
+
+**③ 문자열 기준 (의도가 불명확한 경우)**
+하나라도 해당하면 Y:
 - 상품명에 검색 키워드(또는 핵심 토큰)가 포함
-- 브랜드명이 검색 키워드와 일치하거나 포함
+- 상품의 brand.label(영문) 또는 brand.label_kor(한글) 중 하나가 검색 키워드와 일치
 - 카테고리명이 검색 키워드와 의미적으로 일치
+
+**[판단 예시]**
+| 키워드 | 상품 | 판단 | 이유 |
+|--------|------|------|------|
+| 40대 남자 코디 | 남성 슬랙스 | Y | 중장년 남성 코디 아이템 |
+| 비즈니스캐주얼 | 남성 셔츠 | Y | 비즈캐주얼 핵심 아이템 |
+| 아버지 생신 선물 | 남성 넥타이 | Y | 중년 남성 선물 적합 |
+| BURBERRY | brand.label="BURBERRY" 상품 | Y | brand.label 일치 |
+| 버버리 | brand.label_kor="버버리" 상품 | Y | brand.label_kor 일치 |
+| 40대 남자 코디 | 여성 원피스 | N | 성별·타겟 불일치 |
 
 관련 비율 = (Y 판정된 상품 수) / (검사한 상품 수)
 점수 = 관련 비율 × 30  (예: 7/10 → relevance_ratio=0.7 → 21점)
@@ -1028,16 +1072,17 @@ source 값 (keywords_db.txt / keywords_web.txt 파일과 대조):
 
 아래 우선순위 순으로 가장 먼저 해당하는 것 하나만 선택:
 
-1. segment=FALLBACK → "폴백 반환 — 검색 매칭 실패, 전체 상품 노출됨"
+1. segment=FALLBACK → "폴백 반환 — 검색 매칭 실패, 유사어 확장 검색(Tier 2) 결과 반환됨"
 2. result_count=0 AND keyword_id 없음 → "미등록 키워드 — search_keywords 사전 추가 필요"
 3. result_count=0 AND has_category=false → "카테고리 매핑 없음 — search_category_keywords 등록 필요"
 4. result_count=0 → "결과 0건 — 원인 불명, 수동 조사 필요"
-5. 관련 비율 < 0.4 AND has_category=false → "카테고리 미분류(ETC) — keyword_type 재설정 필요"
-6. 이중의도=true AND (카테고리 OR 브랜드 누락) → "이중 의도 미충족 — {누락된 쪽} 매핑 추가 필요"
-7. soldout_rate > 0.3 → "품절 상품 {N}% 노출 — 품절 필터 부재"
-8. keyword_id 있음 AND SAME=0 AND SIMILAR=0 → "동의어/유사어 없음 — Fallback 불가"
-9. keyword_id 없음 (result>0이지만 미등록) → "사전 미등록 — 형태소/Fallback 개선 불가"
-10. 정상 → "정상"
+5. keyword_type=STYLE AND 관련 비율 < 0.4 → "STYLE 키워드 — 검색 entity 미지원, 상품명 텍스트 검색으로만 처리됨"
+6. 관련 비율 < 0.4 AND has_category=false → "카테고리 미분류(ETC) — keyword_type 재설정 필요"
+7. 이중의도=true AND (카테고리 OR 브랜드 누락) → "이중 의도 미충족 — {누락된 쪽} 매핑 추가 필요"
+8. soldout_rate > 0.3 → "품절 상품 {N}% 노출 — 품절 필터 부재"
+9. keyword_id 있음 AND SAME=0 AND SIMILAR=0 → "동의어/유사어 없음 — Fallback 불가"
+10. keyword_id 없음 (result>0이지만 미등록) → "사전 미등록 — 형태소/Fallback 개선 불가"
+11. 정상 → "정상"
 
 ---
 
