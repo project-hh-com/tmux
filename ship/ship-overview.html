@@ -1,855 +1,1235 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ship — Claude Agent 워크플로</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ship — Claude Agent 워크플로</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
-  :root {
-    --bg: #f4f5f7;
-    --card: #ffffff;
-    --border: #e5e7eb;
-    --text-primary: #111827;
-    --text-secondary: #4b5563;
-    --text-muted: #9ca3af;
-    --accent: #4f46e5;
-    --header-h: 96px;
-  }
+        :root {
+            --bg: #f4f5f7;
+            --card: #ffffff;
+            --border: #e5e7eb;
+            --text-primary: #111827;
+            --text-secondary: #4b5563;
+            --text-muted: #9ca3af;
+            --accent: #4f46e5;
+            --header-h: 96px;
+        }
 
-  body {
-    font-family: 'Noto Sans KR', sans-serif;
-    background: var(--bg);
-    color: var(--text-primary);
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background: var(--bg);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
 
-  /* ── 공통 헤더 ── */
-  .site-header {
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    background: #fff;
-    box-shadow: 0 1px 0 var(--border);
-  }
-  .top-nav {
-    padding: 0 48px;
-    height: 56px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid #f3f4f6;
-  }
-  .nav-left { display: flex; align-items: center; gap: 4px; }
-  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
-  .nav-logo span { color: #6366f1; }
-  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
-  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
-  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
-  .nav-link.active { background: #eef2ff; color: var(--accent); }
-  .nav-badge { font-size: 11px; font-weight: 600; background: #eef2ff; color: var(--accent); padding: 3px 10px; border-radius: 20px; }
-  .breadcrumb {
-    padding: 9px 48px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
-  .breadcrumb a:hover { color: var(--accent); }
-  .bc-sep { color: #d1d5db; margin: 0 2px; }
-  .bc-current { color: var(--text-primary); font-weight: 500; }
+        /* ── 공통 헤더 ── */
+        .site-header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: #fff;
+            box-shadow: 0 1px 0 var(--border);
+        }
 
-  /* ── 페이지 컨테이너 ── */
-  .page {
-    max-width: 1008px;
-    margin: 0 auto;
-    padding: 32px 48px 80px;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    flex: 1;
-    width: 100%;
-  }
+        .top-nav {
+            padding: 0 48px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #f3f4f6;
+        }
 
-  /* ── 푸터 ── */
-  .site-footer {
-    text-align: center;
-    padding: 28px;
-    font-size: 13px;
-    color: var(--text-muted);
-    border-top: 1px solid var(--border);
-    background: #fff;
-    margin-top: auto;
-  }
-  .site-footer a { color: #6366f1; text-decoration: none; }
-  .site-footer a:hover { text-decoration: underline; }
+        .nav-left {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
 
-  /* ── 헤더 ── */
-  .header {
-    background: #fff;
-    border-radius: 16px;
-    padding: 36px 40px;
-    border: 1px solid #e5e7eb;
-    display: flex;
-    align-items: center;
-    gap: 24px;
-  }
-  .header-icon {
-    font-size: 48px;
-    line-height: 1;
-  }
-  .header-text h1 {
-    font-size: 28px;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-    color: #111827;
-  }
-  .header-text p {
-    margin-top: 6px;
-    font-size: 15px;
-    color: #6b7280;
-    font-weight: 400;
-  }
-  .badge {
-    display: inline-block;
-    background: #eef2ff;
-    color: #4f46e5;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 20px;
-    margin-top: 10px;
-  }
+        .nav-logo {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--text-primary);
+            text-decoration: none;
+            padding: 6px 12px 6px 0;
+        }
 
-  /* ── 카드 공통 ── */
-  .card {
-    background: #fff;
-    border-radius: 14px;
-    border: 1px solid #e5e7eb;
-    padding: 28px 32px;
-  }
-  .card-title {
-    font-size: 13px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: #9ca3af;
-    margin-bottom: 20px;
-  }
+        .nav-logo span {
+            color: #6366f1;
+        }
 
-  /* ── 2열 그리드 ── */
-  .grid-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-  }
+        .nav-divider {
+            width: 1px;
+            height: 20px;
+            background: var(--border);
+            margin: 0 8px;
+        }
 
-  /* ── 전체 플로우 ── */
-  .flow {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
-  .flow-step {
-    display: flex;
-    gap: 20px;
-    position: relative;
-  }
-  .flow-step:not(:last-child)::before {
-    content: '';
-    position: absolute;
-    left: 19px;
-    top: 40px;
-    bottom: -12px;
-    width: 2px;
-    background: #e5e7eb;
-  }
-  .flow-step + .flow-step {
-    margin-top: 12px;
-  }
-  .step-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    flex-shrink: 0;
-    position: relative;
-    z-index: 1;
-  }
-  .step-body {
-    flex: 1;
-    padding: 8px 0 16px;
-  }
-  .step-label {
-    font-size: 13px;
-    font-weight: 600;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .step-title {
-    font-size: 16px;
-    font-weight: 700;
-    color: #111827;
-    margin: 3px 0 6px;
-  }
-  .step-desc {
-    font-size: 14px;
-    color: #4b5563;
-    line-height: 1.6;
-  }
-  .step-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-  }
-  .tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 500;
-    padding: 3px 9px;
-    border-radius: 6px;
-    background: #f3f4f6;
-    color: #374151;
-  }
+        .nav-link {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            transition: background .12s, color .12s;
+        }
 
-  /* 색상 팔레트 */
-  .c-indigo  { background: #eef2ff; color: #4f46e5; }
-  .c-violet  { background: #f5f3ff; color: #7c3aed; }
-  .c-blue    { background: #eff6ff; color: #2563eb; }
-  .c-sky     { background: #f0f9ff; color: #0284c7; }
-  .c-teal    { background: #f0fdfa; color: #0d9488; }
-  .c-green   { background: #f0fdf4; color: #16a34a; }
-  .c-amber   { background: #fffbeb; color: #d97706; }
-  .c-red     { background: #fef2f2; color: #dc2626; }
-  .c-rose    { background: #fff1f2; color: #e11d48; }
-  .c-gray    { background: #f9fafb; color: #374151; }
+        .nav-link:hover {
+            background: #f3f4f6;
+            color: var(--text-primary);
+        }
 
-  .icon-bg-indigo { background: #eef2ff; }
-  .icon-bg-violet { background: #f5f3ff; }
-  .icon-bg-blue   { background: #eff6ff; }
-  .icon-bg-teal   { background: #f0fdfa; }
-  .icon-bg-green  { background: #f0fdf4; }
-  .icon-bg-amber  { background: #fffbeb; }
-  .icon-bg-red    { background: #fef2f2; }
-  .icon-bg-gray   { background: #f3f4f6; }
+        .nav-link.active {
+            background: #eef2ff;
+            color: var(--accent);
+        }
 
-  /* ── Git 플로우 타임라인 ── */
-  .git-timeline {
-    display: flex;
-    align-items: flex-start;
-    gap: 0;
-    overflow-x: auto;
-    padding: 4px 0 8px;
-  }
-  .git-node {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 120px;
-    flex: 1;
-    position: relative;
-  }
-  .git-node:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    top: 18px;
-    left: calc(50% + 18px);
-    right: calc(-50% + 18px);
-    height: 2px;
-    background: #d1d5db;
-  }
-  .git-dot {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    position: relative;
-    z-index: 1;
-    border: 2px solid #e5e7eb;
-    background: #fff;
-  }
-  .git-dot.active { border-color: #6366f1; background: #eef2ff; }
-  .git-node-label {
-    margin-top: 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #374151;
-    text-align: center;
-  }
-  .git-node-sub {
-    font-size: 11px;
-    color: #9ca3af;
-    text-align: center;
-    margin-top: 2px;
-    line-height: 1.4;
-  }
+        .nav-badge {
+            font-size: 11px;
+            font-weight: 600;
+            background: #eef2ff;
+            color: var(--accent);
+            padding: 3px 10px;
+            border-radius: 20px;
+        }
 
-  /* ── Wave 레이아웃 시각화 ── */
-  .tmux-preview {
-    background: #1e2030;
-    border-radius: 10px;
-    padding: 16px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: #a9b1d6;
-  }
-  .tmux-row {
-    display: flex;
-    gap: 8px;
-    height: 80px;
-  }
-  .tmux-row + .tmux-row { margin-top: 8px; }
-  .tmux-pane {
-    border: 1px solid #3d405e;
-    border-radius: 6px;
-    padding: 8px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    overflow: hidden;
-  }
-  .pane-title {
-    font-size: 10px;
-    color: #7aa2f7;
-    font-weight: 500;
-    border-bottom: 1px solid #3d405e;
-    padding-bottom: 4px;
-    margin-bottom: 2px;
-  }
-  .pane-content {
-    font-size: 10px;
-    color: #565f89;
-    line-height: 1.5;
-  }
-  .pane-main { flex: 1.4; }
-  .pane-wave { flex: 1; }
-  .pane-small { flex: 1; height: auto; min-height: 50px; }
-  .wave-col {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    flex: 1;
-  }
+        .breadcrumb {
+            padding: 9px 48px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
 
-  /* ── 에이전트 그리드 ── */
-  .agent-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-  }
-  .agent-card {
-    border-radius: 10px;
-    padding: 14px 16px;
-    border: 1px solid #e5e7eb;
-  }
-  .agent-emoji { font-size: 22px; }
-  .agent-name {
-    font-size: 14px;
-    font-weight: 700;
-    color: #111827;
-    margin: 6px 0 3px;
-  }
-  .agent-wave {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 7px;
-    border-radius: 4px;
-    display: inline-block;
-    margin-bottom: 6px;
-  }
-  .wave-a { background: #eff6ff; color: #2563eb; }
-  .wave-b { background: #f0fdf4; color: #16a34a; }
-  .agent-desc {
-    font-size: 12px;
-    color: #6b7280;
-    line-height: 1.5;
-  }
+        .breadcrumb a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color .12s;
+        }
 
-  /* ── Debate 설명 ── */
-  .debate-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    padding: 14px 0;
-    border-bottom: 1px solid #f3f4f6;
-  }
-  .debate-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .debate-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    flex-shrink: 0;
-  }
-  .debate-text .dt-title { font-size: 14px; font-weight: 600; color: #111827; }
-  .debate-text .dt-desc  { font-size: 13px; color: #6b7280; margin-top: 3px; line-height: 1.5; }
+        .breadcrumb a:hover {
+            color: var(--accent);
+        }
 
-  /* ── 판정 배지 ── */
-  .verdict-row {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-top: 4px;
-  }
-  .verdict-badge {
-    font-size: 12px;
-    font-weight: 700;
-    padding: 4px 12px;
-    border-radius: 6px;
-    letter-spacing: 0.3px;
-  }
+        .bc-sep {
+            color: #d1d5db;
+            margin: 0 2px;
+        }
 
-  /* ── 코드 블록 ── */
-  .code {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 14px 16px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
-    color: #1e293b;
-    margin-top: 10px;
-    white-space: pre-wrap;
-    line-height: 1.6;
-  }
-  .code .cm { color: #94a3b8; }
-  .code .ck { color: #7c3aed; font-weight: 500; }
-  .code .cv { color: #0284c7; }
-  .code .cs { color: #16a34a; }
+        .bc-current {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
 
-  /* ── 요약 박스 ── */
-  .summary-box {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 18px 20px;
-  }
-  .summary-box .s-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: #374151;
-    margin-bottom: 10px;
-  }
-  .summary-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-  .summary-list li {
-    font-size: 13px;
-    color: #4b5563;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    line-height: 1.5;
-  }
-  .summary-list li::before {
-    content: '✓';
-    color: #10b981;
-    font-weight: 700;
-    flex-shrink: 0;
-    margin-top: 1px;
-  }
+        /* ── 레이아웃 ── */
+        .layout {
+            display: flex;
+            flex: 1;
+            min-height: calc(100vh - var(--header-h));
+            background: var(--bg);
+        }
 
-  @media (max-width: 768px) {
-    .top-nav { padding: 0 20px; }
-    .nav-divider, .breadcrumb { padding-left: 20px; padding-right: 20px; }
-    .page { padding: 24px 20px 60px; }
-    .grid-2 { grid-template-columns: 1fr; }
-    .agent-grid { grid-template-columns: repeat(2, 1fr); }
-  }
-  @media (max-width: 480px) {
-    .agent-grid { grid-template-columns: 1fr; }
-  }
-</style>
+        /* ── 사이드바 ── */
+        .sidebar {
+            width: 240px;
+            flex-shrink: 0;
+            background: var(--card);
+            border-right: 1px solid var(--border);
+            padding: 24px 0;
+            position: sticky;
+            top: var(--header-h);
+            height: calc(100vh - var(--header-h));
+            overflow-y: auto;
+        }
+
+        .sidebar-logo {
+            padding: 0 24px 20px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sidebar-logo .logo-icon {
+            font-size: 22px;
+            line-height: 1;
+        }
+
+        .sidebar-logo .logo-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .sidebar-logo .logo-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+
+        .nav-section-title {
+            padding: 6px 24px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+
+        .nav-item {
+            display: block;
+            padding: 8px 24px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .nav-item:hover {
+            color: var(--accent);
+            background: #eef2ff;
+            border-left-color: var(--accent);
+        }
+
+        .nav-item .nav-num {
+            color: var(--text-muted);
+            font-size: 11px;
+            margin-right: 6px;
+        }
+
+        /* ── 메인 컨텐츠 ── */
+        .main {
+            flex: 1;
+            padding: 28px 36px 64px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            min-width: 0;
+        }
+
+        /* ── 푸터 ── */
+        .site-footer {
+            text-align: center;
+            padding: 28px;
+            font-size: 13px;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            background: #fff;
+            margin-top: auto;
+        }
+
+        .site-footer a {
+            color: #6366f1;
+            text-decoration: none;
+        }
+
+        .site-footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* ── 헤더 ── */
+        .header {
+            background: #fff;
+            border-radius: 16px;
+            padding: 36px 40px;
+            border: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-icon {
+            font-size: 48px;
+            line-height: 1;
+        }
+
+        .header-text h1 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: #111827;
+        }
+
+        .header-text p {
+            margin-top: 6px;
+            font-size: 15px;
+            color: #6b7280;
+            font-weight: 400;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #eef2ff;
+            color: #4f46e5;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 20px;
+            margin-top: 10px;
+        }
+
+        /* ── 카드 공통 ── */
+        .card {
+            background: #fff;
+            border-radius: 14px;
+            border: 1px solid #e5e7eb;
+            padding: 28px 32px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #9ca3af;
+            margin-bottom: 20px;
+        }
+
+        /* ── 2열 그리드 ── */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        /* ── 전체 플로우 ── */
+        .flow {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .flow-step {
+            display: flex;
+            gap: 20px;
+            position: relative;
+        }
+
+        .flow-step:not(:last-child)::before {
+            content: '';
+            position: absolute;
+            left: 19px;
+            top: 40px;
+            bottom: -12px;
+            width: 2px;
+            background: #e5e7eb;
+        }
+
+        .flow-step+.flow-step {
+            margin-top: 12px;
+        }
+
+        .step-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+        }
+
+        .step-body {
+            flex: 1;
+            padding: 8px 0 16px;
+        }
+
+        .step-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .step-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #111827;
+            margin: 3px 0 6px;
+        }
+
+        .step-desc {
+            font-size: 14px;
+            color: #4b5563;
+            line-height: 1.6;
+        }
+
+        .step-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 3px 9px;
+            border-radius: 6px;
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        /* 색상 팔레트 */
+        .c-indigo {
+            background: #eef2ff;
+            color: #4f46e5;
+        }
+
+        .c-violet {
+            background: #f5f3ff;
+            color: #7c3aed;
+        }
+
+        .c-blue {
+            background: #eff6ff;
+            color: #2563eb;
+        }
+
+        .c-sky {
+            background: #f0f9ff;
+            color: #0284c7;
+        }
+
+        .c-teal {
+            background: #f0fdfa;
+            color: #0d9488;
+        }
+
+        .c-green {
+            background: #f0fdf4;
+            color: #16a34a;
+        }
+
+        .c-amber {
+            background: #fffbeb;
+            color: #d97706;
+        }
+
+        .c-red {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+
+        .c-rose {
+            background: #fff1f2;
+            color: #e11d48;
+        }
+
+        .c-gray {
+            background: #f9fafb;
+            color: #374151;
+        }
+
+        .icon-bg-indigo {
+            background: #eef2ff;
+        }
+
+        .icon-bg-violet {
+            background: #f5f3ff;
+        }
+
+        .icon-bg-blue {
+            background: #eff6ff;
+        }
+
+        .icon-bg-teal {
+            background: #f0fdfa;
+        }
+
+        .icon-bg-green {
+            background: #f0fdf4;
+        }
+
+        .icon-bg-amber {
+            background: #fffbeb;
+        }
+
+        .icon-bg-red {
+            background: #fef2f2;
+        }
+
+        .icon-bg-gray {
+            background: #f3f4f6;
+        }
+
+        /* ── Git 플로우 타임라인 ── */
+        .git-timeline {
+            display: flex;
+            align-items: flex-start;
+            gap: 0;
+            overflow-x: auto;
+            padding: 4px 0 8px;
+        }
+
+        .git-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 120px;
+            flex: 1;
+            position: relative;
+        }
+
+        .git-node:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            top: 18px;
+            left: calc(50% + 18px);
+            right: calc(-50% + 18px);
+            height: 2px;
+            background: #d1d5db;
+        }
+
+        .git-dot {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            position: relative;
+            z-index: 1;
+            border: 2px solid #e5e7eb;
+            background: #fff;
+        }
+
+        .git-dot.active {
+            border-color: #6366f1;
+            background: #eef2ff;
+        }
+
+        .git-node-label {
+            margin-top: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            text-align: center;
+        }
+
+        .git-node-sub {
+            font-size: 11px;
+            color: #9ca3af;
+            text-align: center;
+            margin-top: 2px;
+            line-height: 1.4;
+        }
+
+        /* ── Wave 레이아웃 시각화 ── */
+        .tmux-preview {
+            background: #1e2030;
+            border-radius: 10px;
+            padding: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: #a9b1d6;
+        }
+
+        .tmux-row {
+            display: flex;
+            gap: 8px;
+            height: 80px;
+        }
+
+        .tmux-row+.tmux-row {
+            margin-top: 8px;
+        }
+
+        .tmux-pane {
+            border: 1px solid #3d405e;
+            border-radius: 6px;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            overflow: hidden;
+        }
+
+        .pane-title {
+            font-size: 10px;
+            color: #7aa2f7;
+            font-weight: 500;
+            border-bottom: 1px solid #3d405e;
+            padding-bottom: 4px;
+            margin-bottom: 2px;
+        }
+
+        .pane-content {
+            font-size: 10px;
+            color: #565f89;
+            line-height: 1.5;
+        }
+
+        .pane-main {
+            flex: 1.4;
+        }
+
+        .pane-wave {
+            flex: 1;
+        }
+
+        .pane-small {
+            flex: 1;
+            height: auto;
+            min-height: 50px;
+        }
+
+        .wave-col {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+        }
+
+        /* ── 에이전트 그리드 ── */
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .agent-card {
+            border-radius: 10px;
+            padding: 14px 16px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .agent-emoji {
+            font-size: 22px;
+        }
+
+        .agent-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: #111827;
+            margin: 6px 0 3px;
+        }
+
+        .agent-wave {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-bottom: 6px;
+        }
+
+        .wave-a {
+            background: #eff6ff;
+            color: #2563eb;
+        }
+
+        .wave-b {
+            background: #f0fdf4;
+            color: #16a34a;
+        }
+
+        .agent-desc {
+            font-size: 12px;
+            color: #6b7280;
+            line-height: 1.5;
+        }
+
+        /* ── Debate 설명 ── */
+        .debate-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 14px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .debate-row:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .debate-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .debate-text .dt-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .debate-text .dt-desc {
+            font-size: 13px;
+            color: #6b7280;
+            margin-top: 3px;
+            line-height: 1.5;
+        }
+
+        /* ── 판정 배지 ── */
+        .verdict-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+
+        .verdict-badge {
+            font-size: 12px;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 6px;
+            letter-spacing: 0.3px;
+        }
+
+        /* ── 코드 블록 ── */
+        .code {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: #1e293b;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .code .cm {
+            color: #94a3b8;
+        }
+
+        .code .ck {
+            color: #7c3aed;
+            font-weight: 500;
+        }
+
+        .code .cv {
+            color: #0284c7;
+        }
+
+        .code .cs {
+            color: #16a34a;
+        }
+
+        /* ── 요약 박스 ── */
+        .summary-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 18px 20px;
+        }
+
+        .summary-box .s-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #374151;
+            margin-bottom: 10px;
+        }
+
+        .summary-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+
+        .summary-list li {
+            font-size: 13px;
+            color: #4b5563;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            line-height: 1.5;
+        }
+
+        .summary-list li::before {
+            content: '✓';
+            color: #10b981;
+            font-weight: 700;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        @media (max-width: 900px) {
+            .sidebar {
+                display: none;
+            }
+
+            .main {
+                padding: 24px 20px 60px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .top-nav {
+                padding: 0 20px;
+            }
+
+            .nav-divider,
+            .breadcrumb {
+                padding-left: 20px;
+                padding-right: 20px;
+            }
+
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+
+            .agent-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 480px) {
+            .agent-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
 </head>
+
 <body>
 
-<header class="site-header">
-  <nav class="top-nav">
-    <div class="nav-left">
-      <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
-      <div class="nav-divider"></div>
-      <a href="ship-tutorial.html" class="nav-link active">ship</a>
-    </div>
-    <span class="nav-badge">Claude Agent</span>
-  </nav>
-  <div class="breadcrumb">
-    <a href="../index.html">~/tmux</a>
-    <span class="bc-sep">/</span>
-    <a href="ship-tutorial.html">ship</a>
-    <span class="bc-sep">/</span>
-    <span class="bc-current">개요</span>
-  </div>
-</header>
-
-<div class="page">
-
-  <!-- ── 헤더 ── -->
-  <div class="header">
-    <div class="header-icon">🚢</div>
-    <div class="header-text">
-      <h1>ship</h1>
-      <p>Claude Agent Teams 기반 자동 개발 워크플로 — 기획부터 PR까지 원커맨드</p>
-      <span class="badge">CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</span>
-    </div>
-  </div>
-
-  <!-- ── Git 플로우 (항상 실행) ── -->
-  <div class="card">
-    <div class="card-title">Git 플로우 — 항상 자동 실행</div>
-    <div class="git-timeline">
-      <div class="git-node">
-        <div class="git-dot active">🌿</div>
-        <div class="git-node-label">브랜치 생성</div>
-        <div class="git-node-sub">feat/{slug}<br>-{timestamp}</div>
-      </div>
-      <div class="git-node">
-        <div class="git-dot active">💾</div>
-        <div class="git-node-label">중간 커밋</div>
-        <div class="git-node-sub">Wave A 완료 후<br>자동 push</div>
-      </div>
-      <div class="git-node">
-        <div class="git-dot active">💾</div>
-        <div class="git-node-label">중간 커밋</div>
-        <div class="git-node-sub">Wave B 완료 후<br>자동 push</div>
-      </div>
-      <div class="git-node">
-        <div class="git-dot active">🔧</div>
-        <div class="git-node-label">수정 커밋</div>
-        <div class="git-node-sub">자동 수정<br>라운드마다</div>
-      </div>
-      <div class="git-node">
-        <div class="git-dot active">📬</div>
-        <div class="git-node-label">PR 생성</div>
-        <div class="git-node-sub">게이트 무관<br>항상 실행</div>
-      </div>
-    </div>
-    <div style="margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap;">
-      <span class="tag c-green">✓ 보호 브랜치(main/master/prd)면 새 브랜치 자동 생성</span>
-      <span class="tag c-blue">✓ 변경사항 없으면 커밋 자동 스킵</span>
-      <span class="tag c-amber">✓ 게이트 실패 시 Draft PR · 통과 시 일반 PR</span>
-      <span class="tag c-indigo">✓ 라벨 "Claude Agent" 자동 부착</span>
-    </div>
-  </div>
-
-  <!-- ── 전체 실행 흐름 ── -->
-  <div class="card">
-    <div class="card-title">전체 실행 흐름</div>
-    <div class="flow">
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-indigo">🌿</div>
-        <div class="step-body">
-          <div class="step-label">Git 사전작업</div>
-          <div class="step-title">브랜치 생성 &amp; 초기 설정</div>
-          <div class="step-desc">feature 설명에서 ASCII 슬러그 추출 → <code>feat/{slug}-{YYYYMMDD-HHmmss}</code> 브랜치 생성. 이미 feature 브랜치에 있으면 현재 브랜치 그대로 사용.</div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-indigo">📐</div>
-        <div class="step-body">
-          <div class="step-label">Phase 1</div>
-          <div class="step-title">Architect — 계획 수립 &amp; 에이전트 선택</div>
-          <div class="step-desc">요청을 분석해 <code>plan.md</code>와 <code>agents.txt</code> 자동 생성. 불필요한 에이전트는 제외.</div>
-          <div class="step-tags">
-            <span class="tag c-gray">버그 → debugger 필수</span>
-            <span class="tag c-gray">UI → frontend</span>
-            <span class="tag c-gray">API → backend</span>
-            <span class="tag c-gray">보안 → security</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-violet">🗣️</div>
-        <div class="step-body">
-          <div class="step-label">Debate 1</div>
-          <div class="step-title">설계 계획 Red / Blue / Judge 토론</div>
-          <div class="step-desc">🔴 Red가 plan.md 허점 공격 → 🔵 Blue가 ACCEPT/MITIGATE/REJECT 판정 후 수정 → ⚖️ Judge가 최대 2라운드 심판. CONSENSUS 시 Phase 3 진입.</div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-blue">⚡</div>
-        <div class="step-body">
-          <div class="step-label">Phase 3</div>
-          <div class="step-title">2-Wave 병렬 에이전트 실행</div>
-          <div class="step-desc">Wave A(구현) 완료 후 Wave B(검증) 시작. Wave A 패널은 B가 시작될 때까지 화면에 유지.</div>
-          <div class="step-tags">
-            <span class="tag c-blue">Wave A: backend · frontend · debugger</span>
-            <span class="tag c-green">Wave B: reviewer · test · security</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-teal">💾</div>
-        <div class="step-body">
-          <div class="step-label">중간 Git</div>
-          <div class="step-title">Wave A 완료 후 커밋 / Wave B 완료 후 커밋</div>
-          <div class="step-desc">각 Wave 완료 시 변경사항 자동 <code>git add -A</code> → commit → push. 변경사항 없으면 스킵.</div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-violet">🗣️</div>
-        <div class="step-body">
-          <div class="step-label">Debate 2</div>
-          <div class="step-title">구현 결과 토론 — REWORK 판정 시 Wave 재실행</div>
-          <div class="step-desc">에이전트 구성에 따라 test(커버리지) 또는 reviewer(코드리뷰) 초점으로 토론. Judge가 REWORK 판정 시 Wave 처음부터 재실행 (횟수 제한 없음).</div>
-          <div class="step-tags">
-            <span class="tag c-green">CONSENSUS → 다음 단계</span>
-            <span class="tag c-amber">CONTINUE → 다음 라운드</span>
-            <span class="tag c-red">REWORK → Wave 재실행</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-green">🔍</div>
-        <div class="step-body">
-          <div class="step-label">Phase 4</div>
-          <div class="step-title">CI 하네스 게이트 — 4단계</div>
-          <div class="step-desc">tsc → eslint → test → build. 실패 항목이 있으면 Phase 5로 이동.</div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-amber">🔄</div>
-        <div class="step-body">
-          <div class="step-label">Phase 5 (실패 시)</div>
-          <div class="step-title">자동 수정 루프 — 최대 3라운드</div>
-          <div class="step-desc">실패 로그를 에이전트에게 전달 → 코드 수정 → 게이트 재검사 → 커밋/푸시. 라운드마다 자동 커밋.</div>
-        </div>
-      </div>
-
-      <div class="flow-step">
-        <div class="step-icon icon-bg-indigo">📬</div>
-        <div class="step-body">
-          <div class="step-label">Phase 6 — 항상 실행</div>
-          <div class="step-title">릴리스 매니저 — 최종 커밋 / 푸시 / PR 생성</div>
-          <div class="step-desc">게이트 통과 여부와 무관하게 무조건 실행. 미커밋 변경사항 정리 → push → PR 생성 또는 업데이트. 기존 PR 있으면 본문 업데이트.</div>
-          <div class="step-tags">
-            <span class="tag c-green">게이트 통과 → 일반 PR</span>
-            <span class="tag c-amber">게이트 실패 → Draft PR</span>
-            <span class="tag c-indigo">라벨: Claude Agent 필수</span>
-            <span class="tag c-red">prd/master 베이스 금지</span>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- ── 에이전트 구성 + tmux 레이아웃 ── -->
-  <div class="grid-2">
-
-    <div class="card">
-      <div class="card-title">에이전트 구성</div>
-      <div class="agent-grid">
-        <div class="agent-card">
-          <div class="agent-emoji">🔧</div>
-          <div class="agent-name">backend</div>
-          <div class="agent-wave wave-a">Wave A</div>
-          <div class="agent-desc">API Route Handler, 서비스 레이어, Zod 검증</div>
-        </div>
-        <div class="agent-card">
-          <div class="agent-emoji">🎨</div>
-          <div class="agent-name">frontend</div>
-          <div class="agent-wave wave-a">Wave A</div>
-          <div class="agent-desc">React 컴포넌트, TanStack Query, Tailwind CSS</div>
-        </div>
-        <div class="agent-card">
-          <div class="agent-emoji">🐛</div>
-          <div class="agent-name">debugger</div>
-          <div class="agent-wave wave-a">Wave A</div>
-          <div class="agent-desc">경쟁 가설 방식 버그 원인 분석 및 수정</div>
-        </div>
-        <div class="agent-card">
-          <div class="agent-emoji">👀</div>
-          <div class="agent-name">reviewer</div>
-          <div class="agent-wave wave-b">Wave B</div>
-          <div class="agent-desc">가독성, 타입 안전성, 레이어 규칙 리뷰</div>
-        </div>
-        <div class="agent-card">
-          <div class="agent-emoji">🧪</div>
-          <div class="agent-name">test</div>
-          <div class="agent-wave wave-b">Wave B</div>
-          <div class="agent-desc">Vitest + Testing Library, 커버리지 80%+</div>
-        </div>
-        <div class="agent-card">
-          <div class="agent-emoji">🔒</div>
-          <div class="agent-name">security</div>
-          <div class="agent-wave wave-b">Wave B</div>
-          <div class="agent-desc">OWASP Top 10, 인증/인가, 시크릿 검토</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">tmux 레이아웃 — Wave A → Wave B</div>
-
-      <!-- Step 1 -->
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <span style="background:#3b4252;color:#7aa2f7;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP 1</span>
-          <span style="font-size:13px;font-weight:600;color:#374151;">Wave A 실행 중</span>
-          <span style="font-size:12px;color:#9ca3af;">— 구현 에이전트만 열림</span>
-        </div>
-        <div class="tmux-preview">
-          <div class="tmux-row">
-            <div class="tmux-pane pane-main">
-              <div class="pane-title">🚢 ship</div>
-              <div class="pane-content">Phase 3 실행 중...<br>⏳ Wave A: 1/2</div>
+    <header class="site-header">
+        <nav class="top-nav">
+            <div class="nav-left">
+                <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
+                <div class="nav-divider"></div>
+                <a href="ship-tutorial.html" class="nav-link active">ship</a>
             </div>
-            <div class="wave-col">
-              <div class="tmux-pane pane-small">
-                <div class="pane-title">🔧 backend</div>
-                <div class="pane-content">서비스 레이어 작성 중</div>
-              </div>
-              <div class="tmux-pane pane-small">
-                <div class="pane-title">🎨 frontend</div>
-                <div class="pane-content">컴포넌트 구현 중</div>
-              </div>
-            </div>
-          </div>
+            <span class="nav-badge">Claude Agent</span>
+        </nav>
+        <div class="breadcrumb">
+            <a href="../index.html">~/tmux</a>
+            <span class="bc-sep">/</span>
+            <a href="ship-tutorial.html">ship</a>
+            <span class="bc-sep">/</span>
+            <span class="bc-current">개요</span>
         </div>
-      </div>
+    </header>
 
-      <!-- 화살표 -->
-      <div style="text-align:center;font-size:18px;color:#9ca3af;margin:4px 0 12px;letter-spacing:2px;">↓ Wave A 완료 · 커밋/푸시</div>
+    <div class="layout">
 
-      <!-- Step 2 -->
-      <div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <span style="background:#1a3a2a;color:#4c9a6a;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP 2</span>
-          <span style="font-size:13px;font-weight:600;color:#374151;">Wave B 시작</span>
-          <span style="font-size:12px;color:#9ca3af;">— A 패널 유지된 채 B 열림</span>
-        </div>
-        <div class="tmux-preview">
-          <div class="tmux-row">
-            <div class="tmux-pane pane-main">
-              <div class="pane-title">🚢 ship</div>
-              <div class="pane-content">✅ Wave A 완료<br>💾 커밋/푸시 완료</div>
+        <!-- ── 사이드바 ── -->
+        <nav class="sidebar">
+            <div class="sidebar-logo">
+                <span class="logo-icon">🚢</span>
+                <div>
+                    <div class="logo-title">ship</div>
+                    <div class="logo-sub">Claude Agent 개요</div>
+                </div>
             </div>
-            <div class="wave-col">
-              <div class="tmux-pane pane-small" style="border-color:#2a4a3a;">
-                <div class="pane-title" style="color:#4c9a6a;">🔧 backend ✓</div>
-                <div class="pane-content" style="color:#4c9a6a;">완료</div>
-              </div>
-              <div class="tmux-pane pane-small" style="border-color:#2a4a3a;">
-                <div class="pane-title" style="color:#4c9a6a;">🎨 frontend ✓</div>
-                <div class="pane-content" style="color:#4c9a6a;">완료</div>
-              </div>
+            <div class="nav-section-title">플로우</div>
+            <a href="#git-flow" class="nav-item"><span class="nav-num">—</span>Git 플로우</a>
+            <a href="#flow" class="nav-item"><span class="nav-num">—</span>전체 실행 흐름</a>
+            <div class="nav-section-title">에이전트</div>
+            <a href="#agents" class="nav-item"><span class="nav-num">—</span>에이전트 구성</a>
+            <a href="#agents" class="nav-item"><span class="nav-num">—</span>tmux 레이아웃</a>
+            <a href="#debate" class="nav-item"><span class="nav-num">—</span>Debate 시스템</a>
+            <div class="nav-section-title">사용</div>
+            <a href="#usage" class="nav-item"><span class="nav-num">—</span>사용법</a>
+        </nav>
+
+        <!-- ── 메인 ── -->
+        <div class="main">
+
+            <!-- ── 헤더 ── -->
+            <div class="header">
+                <div class="header-icon">🚢</div>
+                <div class="header-text">
+                    <h1>ship</h1>
+                    <p>Claude Agent Teams 기반 자동 개발 워크플로 — 기획부터 PR까지 원커맨드</p>
+                    <span class="badge">CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1</span>
+                </div>
             </div>
-            <div class="wave-col">
-              <div class="tmux-pane pane-small" style="border-color:#3a3a5e;">
-                <div class="pane-title" style="color:#bb9af7;">👀 reviewer</div>
-                <div class="pane-content">코드 리뷰 중</div>
-              </div>
-              <div class="tmux-pane pane-small" style="border-color:#3a3a5e;">
-                <div class="pane-title" style="color:#bb9af7;">🧪 test</div>
-                <div class="pane-content">테스트 작성 중</div>
-              </div>
+
+            <!-- ── Git 플로우 (항상 실행) ── -->
+            <div class="card" id="git-flow">
+                <div class="card-title">Git 플로우 — 항상 자동 실행</div>
+                <div class="git-timeline">
+                    <div class="git-node">
+                        <div class="git-dot active">🌿</div>
+                        <div class="git-node-label">브랜치 생성</div>
+                        <div class="git-node-sub">feat/{slug}<br>-{timestamp}</div>
+                    </div>
+                    <div class="git-node">
+                        <div class="git-dot active">💾</div>
+                        <div class="git-node-label">중간 커밋</div>
+                        <div class="git-node-sub">Wave A 완료 후<br>자동 push</div>
+                    </div>
+                    <div class="git-node">
+                        <div class="git-dot active">💾</div>
+                        <div class="git-node-label">중간 커밋</div>
+                        <div class="git-node-sub">Wave B 완료 후<br>자동 push</div>
+                    </div>
+                    <div class="git-node">
+                        <div class="git-dot active">🔧</div>
+                        <div class="git-node-label">수정 커밋</div>
+                        <div class="git-node-sub">자동 수정<br>라운드마다</div>
+                    </div>
+                    <div class="git-node">
+                        <div class="git-dot active">📬</div>
+                        <div class="git-node-label">PR 생성</div>
+                        <div class="git-node-sub">게이트 무관<br>항상 실행</div>
+                    </div>
+                </div>
+                <div style="margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <span class="tag c-green">✓ 보호 브랜치(main/master/prd)면 새 브랜치 자동 생성</span>
+                    <span class="tag c-blue">✓ 변경사항 없으면 커밋 자동 스킵</span>
+                    <span class="tag c-amber">✓ 게이트 실패 시 Draft PR · 통과 시 일반 PR</span>
+                    <span class="tag c-indigo">✓ 라벨 "Claude Agent" 자동 부착</span>
+                </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      <div style="margin-top:12px;font-size:12px;color:#9ca3af;text-align:right;">Wave B 완료 후 A+B 패널 모두 자동 닫힘 → 메인 복귀</div>
-    </div>
+            <!-- ── 전체 실행 흐름 ── -->
+            <div class="card" id="flow">
+                <div class="card-title">전체 실행 흐름</div>
+                <div class="flow">
 
-  </div>
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-indigo">🌿</div>
+                        <div class="step-body">
+                            <div class="step-label">Git 사전작업</div>
+                            <div class="step-title">브랜치 생성 &amp; 초기 설정</div>
+                            <div class="step-desc">feature 설명에서 ASCII 슬러그 추출 →
+                                <code>feat/{slug}-{YYYYMMDD-HHmmss}</code> 브랜치 생성. 이미 feature 브랜치에 있으면 현재 브랜치 그대로 사용.
+                            </div>
+                        </div>
+                    </div>
 
-  <!-- ── Debate 시스템 ── -->
-  <div class="card">
-    <div class="card-title">Debate 시스템 — Red / Blue / Judge</div>
-    <div class="debate-row">
-      <div class="debate-icon" style="background:#fef2f2;">🔴</div>
-      <div class="debate-text">
-        <div class="dt-title">Red (공격자)</div>
-        <div class="dt-desc">계획/코드의 허점, 위험요소, 누락된 엣지케이스를 공격. 해결책 제시 금지 — 문제 지적만.</div>
-      </div>
-    </div>
-    <div class="debate-row">
-      <div class="debate-icon" style="background:#eff6ff;">🔵</div>
-      <div class="debate-text">
-        <div class="dt-title">Blue (방어자)</div>
-        <div class="dt-desc">각 공격 항목을 ACCEPT / MITIGATE / REJECT로 판정. ACCEPT·MITIGATE는 실제 파일을 수정해 반영.</div>
-      </div>
-    </div>
-    <div class="debate-row">
-      <div class="debate-icon" style="background:#fffbeb;">⚖️</div>
-      <div class="debate-text">
-        <div class="dt-title">Judge (심판)</div>
-        <div class="dt-desc">Red/Blue 토론을 심판. Debate 2에서는 REWORK 판정으로 Wave 전체 재실행 가능 (횟수 제한 없음).</div>
-        <div class="verdict-row">
-          <span class="verdict-badge" style="background:#f0fdf4; color:#16a34a;">CONSENSUS</span>
-          <span class="verdict-badge" style="background:#fffbeb; color:#d97706;">CONTINUE</span>
-          <span class="verdict-badge" style="background:#fef2f2; color:#dc2626;">REWORK</span>
-        </div>
-      </div>
-    </div>
-  </div>
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-indigo">📐</div>
+                        <div class="step-body">
+                            <div class="step-label">Phase 1</div>
+                            <div class="step-title">Architect — 계획 수립 &amp; 에이전트 선택</div>
+                            <div class="step-desc">요청을 분석해 <code>plan.md</code>와 <code>agents.txt</code> 자동 생성. 불필요한
+                                에이전트는 제외.</div>
+                            <div class="step-tags">
+                                <span class="tag c-gray">버그 → debugger 필수</span>
+                                <span class="tag c-gray">UI → frontend</span>
+                                <span class="tag c-gray">API → backend</span>
+                                <span class="tag c-gray">보안 → security</span>
+                            </div>
+                        </div>
+                    </div>
 
-  <!-- ── 사용법 ── -->
-  <div class="card">
-    <div class="card-title">사용법</div>
-    <div class="code"><span class="cm"># tmux 세션에서 실행 (패널 분할을 위해 필수)</span>
-<span class="ck">tmux new-session</span> -s work
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-violet">🗣️</div>
+                        <div class="step-body">
+                            <div class="step-label">Debate 1</div>
+                            <div class="step-title">설계 계획 Red / Blue / Judge 토론</div>
+                            <div class="step-desc">🔴 Red가 plan.md 허점 공격 → 🔵 Blue가 ACCEPT/MITIGATE/REJECT 판정 후 수정 → ⚖️
+                                Judge가 최대 2라운드 심판. CONSENSUS 시 Phase 3 진입.</div>
+                        </div>
+                    </div>
 
-<span class="cm"># 실행</span>
-<span class="cv">ship</span> <span class="cs">"구현하거나 수정할 내용을 자연어로 설명"</span>
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-blue">⚡</div>
+                        <div class="step-body">
+                            <div class="step-label">Phase 3</div>
+                            <div class="step-title">2-Wave 병렬 에이전트 실행</div>
+                            <div class="step-desc">Wave A(구현) 완료 후 Wave B(검증) 시작. Wave A 패널은 B가 시작될 때까지 화면에 유지.</div>
+                            <div class="step-tags">
+                                <span class="tag c-blue">Wave A: backend · frontend · debugger</span>
+                                <span class="tag c-green">Wave B: reviewer · test · security</span>
+                            </div>
+                        </div>
+                    </div>
 
-<span class="cm"># 예시</span>
-<span class="cv">ship</span> <span class="cs">"로그인 시 이름/전화번호 저장 안 되는 버그 수정"</span>
-<span class="cv">ship</span> <span class="cs">"마이페이지 UI를 Figma 디자인대로 구현"</span>
-<span class="cv">ship</span> <span class="cs">"결제 API 연동 및 결제 완료 화면 구현"</span></div>
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-teal">💾</div>
+                        <div class="step-body">
+                            <div class="step-label">중간 Git</div>
+                            <div class="step-title">Wave A 완료 후 커밋 / Wave B 완료 후 커밋</div>
+                            <div class="step-desc">각 Wave 완료 시 변경사항 자동 <code>git add -A</code> → commit → push. 변경사항 없으면
+                                스킵.</div>
+                        </div>
+                    </div>
 
-    <div style="margin-top:16px;">
-      <div class="summary-box">
-        <div class="s-title">핵심 특징</div>
-        <ul class="summary-list">
-          <li>요청 내용에 따라 Architect가 필요한 에이전트만 자동 선택</li>
-          <li>브랜치 생성 → 중간 커밋 → PR 생성이 모든 실행에서 자동으로 보장</li>
-          <li>Wave A(구현) → Wave B(검증) 순차 실행 — 구현 완료 후 리뷰/테스트</li>
-          <li>Debate 2에서 REWORK 판정 시 Wave를 횟수 제한 없이 재실행</li>
-          <li>게이트 실패해도 Draft PR 자동 생성 — 팀에 진행 상황 공유</li>
-          <li>모든 프롬프트는 파일 경로 참조 방식 — OS 인자 한도 초과 없음</li>
-        </ul>
-      </div>
-    </div>
-  </div>
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-violet">🗣️</div>
+                        <div class="step-body">
+                            <div class="step-label">Debate 2</div>
+                            <div class="step-title">구현 결과 토론 — REWORK 판정 시 Wave 재실행</div>
+                            <div class="step-desc">에이전트 구성에 따라 test(커버리지) 또는 reviewer(코드리뷰) 초점으로 토론. Judge가 REWORK 판정 시
+                                Wave 처음부터 재실행 (횟수 제한 없음).</div>
+                            <div class="step-tags">
+                                <span class="tag c-green">CONSENSUS → 다음 단계</span>
+                                <span class="tag c-amber">CONTINUE → 다음 라운드</span>
+                                <span class="tag c-red">REWORK → Wave 재실행</span>
+                            </div>
+                        </div>
+                    </div>
 
-</div>
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-green">🔍</div>
+                        <div class="step-body">
+                            <div class="step-label">Phase 4</div>
+                            <div class="step-title">CI 하네스 게이트 — 4단계</div>
+                            <div class="step-desc">tsc → eslint → test → build. 실패 항목이 있으면 Phase 5로 이동.</div>
+                        </div>
+                    </div>
 
-<footer class="site-footer">
-  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
-</footer>
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-amber">🔄</div>
+                        <div class="step-body">
+                            <div class="step-label">Phase 5 (실패 시)</div>
+                            <div class="step-title">자동 수정 루프 — 최대 3라운드</div>
+                            <div class="step-desc">실패 로그를 에이전트에게 전달 → 코드 수정 → 게이트 재검사 → 커밋/푸시. 라운드마다 자동 커밋.</div>
+                        </div>
+                    </div>
+
+                    <div class="flow-step">
+                        <div class="step-icon icon-bg-indigo">📬</div>
+                        <div class="step-body">
+                            <div class="step-label">Phase 6 — 항상 실행</div>
+                            <div class="step-title">릴리스 매니저 — 최종 커밋 / 푸시 / PR 생성</div>
+                            <div class="step-desc">게이트 통과 여부와 무관하게 무조건 실행. 미커밋 변경사항 정리 → push → PR 생성 또는 업데이트. 기존 PR 있으면
+                                본문 업데이트.</div>
+                            <div class="step-tags">
+                                <span class="tag c-green">게이트 통과 → 일반 PR</span>
+                                <span class="tag c-amber">게이트 실패 → Draft PR</span>
+                                <span class="tag c-indigo">라벨: Claude Agent 필수</span>
+                                <span class="tag c-red">prd/master 베이스 금지</span>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ── 에이전트 구성 + tmux 레이아웃 ── -->
+            <div class="grid-2" id="agents">
+
+                <div class="card">
+                    <div class="card-title">에이전트 구성</div>
+                    <div class="agent-grid">
+                        <div class="agent-card">
+                            <div class="agent-emoji">🔧</div>
+                            <div class="agent-name">backend</div>
+                            <div class="agent-wave wave-a">Wave A</div>
+                            <div class="agent-desc">API Route Handler, 서비스 레이어, Zod 검증</div>
+                        </div>
+                        <div class="agent-card">
+                            <div class="agent-emoji">🎨</div>
+                            <div class="agent-name">frontend</div>
+                            <div class="agent-wave wave-a">Wave A</div>
+                            <div class="agent-desc">React 컴포넌트, TanStack Query, Tailwind CSS</div>
+                        </div>
+                        <div class="agent-card">
+                            <div class="agent-emoji">🐛</div>
+                            <div class="agent-name">debugger</div>
+                            <div class="agent-wave wave-a">Wave A</div>
+                            <div class="agent-desc">경쟁 가설 방식 버그 원인 분석 및 수정</div>
+                        </div>
+                        <div class="agent-card">
+                            <div class="agent-emoji">👀</div>
+                            <div class="agent-name">reviewer</div>
+                            <div class="agent-wave wave-b">Wave B</div>
+                            <div class="agent-desc">가독성, 타입 안전성, 레이어 규칙 리뷰</div>
+                        </div>
+                        <div class="agent-card">
+                            <div class="agent-emoji">🧪</div>
+                            <div class="agent-name">test</div>
+                            <div class="agent-wave wave-b">Wave B</div>
+                            <div class="agent-desc">Vitest + Testing Library, 커버리지 80%+</div>
+                        </div>
+                        <div class="agent-card">
+                            <div class="agent-emoji">🔒</div>
+                            <div class="agent-name">security</div>
+                            <div class="agent-wave wave-b">Wave B</div>
+                            <div class="agent-desc">OWASP Top 10, 인증/인가, 시크릿 검토</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">tmux 레이아웃 — Wave A → Wave B</div>
+
+                    <!-- Step 1 -->
+                    <div style="margin-bottom:12px;">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <span
+                                style="background:#3b4252;color:#7aa2f7;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP
+                                1</span>
+                            <span style="font-size:13px;font-weight:600;color:#374151;">Wave A 실행 중</span>
+                            <span style="font-size:12px;color:#9ca3af;">— 구현 에이전트만 열림</span>
+                        </div>
+                        <div class="tmux-preview">
+                            <div class="tmux-row">
+                                <div class="tmux-pane pane-main">
+                                    <div class="pane-title">🚢 ship</div>
+                                    <div class="pane-content">Phase 3 실행 중...<br>⏳ Wave A: 1/2</div>
+                                </div>
+                                <div class="wave-col">
+                                    <div class="tmux-pane pane-small">
+                                        <div class="pane-title">🔧 backend</div>
+                                        <div class="pane-content">서비스 레이어 작성 중</div>
+                                    </div>
+                                    <div class="tmux-pane pane-small">
+                                        <div class="pane-title">🎨 frontend</div>
+                                        <div class="pane-content">컴포넌트 구현 중</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 화살표 -->
+                    <div style="text-align:center;font-size:18px;color:#9ca3af;margin:4px 0 12px;letter-spacing:2px;">↓
+                        Wave A 완료 · 커밋/푸시</div>
+
+                    <!-- Step 2 -->
+                    <div>
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <span
+                                style="background:#1a3a2a;color:#4c9a6a;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP
+                                2</span>
+                            <span style="font-size:13px;font-weight:600;color:#374151;">Wave B 시작</span>
+                            <span style="font-size:12px;color:#9ca3af;">— A 패널 유지된 채 B 열림</span>
+                        </div>
+                        <div class="tmux-preview">
+                            <div class="tmux-row">
+                                <div class="tmux-pane pane-main">
+                                    <div class="pane-title">🚢 ship</div>
+                                    <div class="pane-content">✅ Wave A 완료<br>💾 커밋/푸시 완료</div>
+                                </div>
+                                <div class="wave-col">
+                                    <div class="tmux-pane pane-small" style="border-color:#2a4a3a;">
+                                        <div class="pane-title" style="color:#4c9a6a;">🔧 backend ✓</div>
+                                        <div class="pane-content" style="color:#4c9a6a;">완료</div>
+                                    </div>
+                                    <div class="tmux-pane pane-small" style="border-color:#2a4a3a;">
+                                        <div class="pane-title" style="color:#4c9a6a;">🎨 frontend ✓</div>
+                                        <div class="pane-content" style="color:#4c9a6a;">완료</div>
+                                    </div>
+                                </div>
+                                <div class="wave-col">
+                                    <div class="tmux-pane pane-small" style="border-color:#3a3a5e;">
+                                        <div class="pane-title" style="color:#bb9af7;">👀 reviewer</div>
+                                        <div class="pane-content">코드 리뷰 중</div>
+                                    </div>
+                                    <div class="tmux-pane pane-small" style="border-color:#3a3a5e;">
+                                        <div class="pane-title" style="color:#bb9af7;">🧪 test</div>
+                                        <div class="pane-content">테스트 작성 중</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:12px;font-size:12px;color:#9ca3af;text-align:right;">Wave B 완료 후 A+B 패널 모두 자동
+                        닫힘 → 메인 복귀</div>
+                </div>
+
+            </div>
+
+            <!-- ── Debate 시스템 ── -->
+            <div class="card" id="debate">
+                <div class="card-title">Debate 시스템 — Red / Blue / Judge</div>
+                <div class="debate-row">
+                    <div class="debate-icon" style="background:#fef2f2;">🔴</div>
+                    <div class="debate-text">
+                        <div class="dt-title">Red (공격자)</div>
+                        <div class="dt-desc">계획/코드의 허점, 위험요소, 누락된 엣지케이스를 공격. 해결책 제시 금지 — 문제 지적만.</div>
+                    </div>
+                </div>
+                <div class="debate-row">
+                    <div class="debate-icon" style="background:#eff6ff;">🔵</div>
+                    <div class="debate-text">
+                        <div class="dt-title">Blue (방어자)</div>
+                        <div class="dt-desc">각 공격 항목을 ACCEPT / MITIGATE / REJECT로 판정. ACCEPT·MITIGATE는 실제 파일을 수정해 반영.
+                        </div>
+                    </div>
+                </div>
+                <div class="debate-row">
+                    <div class="debate-icon" style="background:#fffbeb;">⚖️</div>
+                    <div class="debate-text">
+                        <div class="dt-title">Judge (심판)</div>
+                        <div class="dt-desc">Red/Blue 토론을 심판. Debate 2에서는 REWORK 판정으로 Wave 전체 재실행 가능 (횟수 제한 없음).</div>
+                        <div class="verdict-row">
+                            <span class="verdict-badge" style="background:#f0fdf4; color:#16a34a;">CONSENSUS</span>
+                            <span class="verdict-badge" style="background:#fffbeb; color:#d97706;">CONTINUE</span>
+                            <span class="verdict-badge" style="background:#fef2f2; color:#dc2626;">REWORK</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── 사용법 ── -->
+            <div class="card" id="usage">
+                <div class="card-title">사용법</div>
+                <div class="code"><span class="cm"># tmux 세션에서 실행 (패널 분할을 위해 필수)</span>
+                    <span class="ck">tmux new-session</span> -s work
+
+                    <span class="cm"># 실행</span>
+                    <span class="cv">ship</span> <span class="cs">"구현하거나 수정할 내용을 자연어로 설명"</span>
+
+                    <span class="cm"># 예시</span>
+                    <span class="cv">ship</span> <span class="cs">"로그인 시 이름/전화번호 저장 안 되는 버그 수정"</span>
+                    <span class="cv">ship</span> <span class="cs">"마이페이지 UI를 Figma 디자인대로 구현"</span>
+                    <span class="cv">ship</span> <span class="cs">"결제 API 연동 및 결제 완료 화면 구현"</span>
+                </div>
+
+                <div style="margin-top:16px;">
+                    <div class="summary-box">
+                        <div class="s-title">핵심 특징</div>
+                        <ul class="summary-list">
+                            <li>요청 내용에 따라 Architect가 필요한 에이전트만 자동 선택</li>
+                            <li>브랜치 생성 → 중간 커밋 → PR 생성이 모든 실행에서 자동으로 보장</li>
+                            <li>Wave A(구현) → Wave B(검증) 순차 실행 — 구현 완료 후 리뷰/테스트</li>
+                            <li>Debate 2에서 REWORK 판정 시 Wave를 횟수 제한 없이 재실행</li>
+                            <li>게이트 실패해도 Draft PR 자동 생성 — 팀에 진행 상황 공유</li>
+                            <li>모든 프롬프트는 파일 경로 참조 방식 — OS 인자 한도 초과 없음</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /.main -->
+    </div><!-- /.layout -->
+
+    <footer class="site-footer">
+        Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a>
+    </footer>
 
 </body>
+
 </html>

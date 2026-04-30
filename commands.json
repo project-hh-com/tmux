@@ -10,6 +10,16 @@
     "overview": "ship/ship-overview.html"
   },
   {
+    "name": "sq",
+    "icon": "🔍",
+    "status": "stable",
+    "statusLabel": "Stable",
+    "desc": "검색 품질 평가 원커맨드. 키워드 500개 자동 수집 → 3-Wave 실행(분석/채점/보고) → Debate → PR까지. danble OpenSearch 품질 개선 워크플로.",
+    "tags": ["Search Quality", "OpenSearch", "3-Wave", "Auto PR"],
+    "tutorial": "sq/sq-tutorial.html",
+    "overview": "sq/sq-overview.html"
+  },
+  {
     "name": "fix",
     "icon": "⚡",
     "status": "soon",
