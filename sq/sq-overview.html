@@ -378,6 +378,7 @@
   }
   .wave-a { background: #eff6ff; color: #2563eb; }
   .wave-b { background: #f0fdf4; color: #16a34a; }
+  .wave-c { background: #f5f3ff; color: #7c3aed; }
   .agent-desc {
     font-size: 12px;
     color: #6b7280;
@@ -538,6 +539,11 @@
         <div class="git-node-sub">Wave B 완료 후<br>자동 push</div>
       </div>
       <div class="git-node">
+        <div class="git-dot active">💾</div>
+        <div class="git-node-label">중간 커밋</div>
+        <div class="git-node-sub">Wave C 완료 후<br>자동 push</div>
+      </div>
+      <div class="git-node">
         <div class="git-dot active">🔧</div>
         <div class="git-node-label">수정 커밋</div>
         <div class="git-node-sub">자동 수정<br>라운드마다</div>
@@ -611,11 +617,12 @@
         <div class="step-icon icon-bg-blue">⚡</div>
         <div class="step-body">
           <div class="step-label">Phase 3</div>
-          <div class="step-title">2-Wave 병렬 에이전트 실행</div>
-          <div class="step-desc">Wave A(분석/실행) 완료 후 Wave B(평가/보고) 시작. Wave A 패널은 B가 시작될 때까지 화면에 유지.</div>
+          <div class="step-title">3-Wave 순차 에이전트 실행</div>
+          <div class="step-desc">Wave A(분석/실행) → Wave B(채점) → Wave C(보고) 순으로 실행. reporter는 scorer의 <code>scores.json</code>이 완성된 후에만 시작.</div>
           <div class="step-tags">
             <span class="tag c-blue">Wave A: opensearch · api · runner</span>
-            <span class="tag c-green">Wave B: scorer · reporter</span>
+            <span class="tag c-green">Wave B: scorer</span>
+            <span class="tag c-violet" style="background:#f5f3ff;color:#7c3aed;padding:3px 8px;border-radius:5px;font-size:12px;font-weight:500;">Wave C: reporter</span>
           </div>
         </div>
       </div>
@@ -624,7 +631,7 @@
         <div class="step-icon icon-bg-teal">💾</div>
         <div class="step-body">
           <div class="step-label">중간 Git</div>
-          <div class="step-title">Wave A 완료 후 커밋 / Wave B 완료 후 커밋</div>
+          <div class="step-title">Wave A / Wave B / Wave C 완료 후 커밋</div>
           <div class="step-desc">각 Wave 완료 시 변경사항 자동 <code>git add -A</code> → commit → push. 변경사항 없으면 스킵.</div>
           <div class="step-tags">
             <span class="tag c-teal">에이전트 .sh 스크립트에 <code>source ~/.config/sq/db.env</code> 자동 포함 — 새 tmux 패널도 DB 자동 연결</span>
@@ -744,14 +751,14 @@
         <div class="agent-card">
           <div class="agent-emoji">📝</div>
           <div class="agent-name">reporter</div>
-          <div class="agent-wave wave-b">Wave B</div>
+          <div class="agent-wave wave-c">Wave C</div>
           <div class="agent-desc">리포트 생성: <code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). <code>scores.json</code>이 유일한 채점 소스 — 집계·포매팅만 수행. 독립 채점 및 점수 수정 금지. 세그먼트별 분리 통계(GENERAL/FALLBACK/ZERO_RESULT) 포함. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">tmux 레이아웃 — Wave A → Wave B</div>
+      <div class="card-title">tmux 레이아웃 — Wave A → B → C</div>
 
       <!-- Step 1 -->
       <div style="margin-bottom:12px;">
@@ -788,11 +795,11 @@
       <div style="text-align:center;font-size:18px;color:#9ca3af;margin:4px 0 12px;letter-spacing:2px;">↓ Wave A 완료 · 커밋/푸시</div>
 
       <!-- Step 2 -->
-      <div>
+      <div style="margin-bottom:12px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
           <span style="background:#1a3a2a;color:#4c9a6a;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP 2</span>
-          <span style="font-size:13px;font-weight:600;color:#374151;">Wave B 시작</span>
-          <span style="font-size:12px;color:#9ca3af;">— A 패널 유지된 채 B 열림</span>
+          <span style="font-size:13px;font-weight:600;color:#374151;">Wave B — 채점</span>
+          <span style="font-size:12px;color:#9ca3af;">— scorer만 실행</span>
         </div>
         <div class="tmux-preview">
           <div class="tmux-row">
@@ -815,7 +822,35 @@
                 <div class="pane-title" style="color:#bb9af7;">📊 scorer</div>
                 <div class="pane-content">품질 점수 산정 중</div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 화살표 -->
+      <div style="text-align:center;font-size:18px;color:#9ca3af;margin:4px 0 12px;letter-spacing:2px;">↓ Wave B 완료 · 커밋/푸시</div>
+
+      <!-- Step 3 -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="background:#2e1a4a;color:#bb9af7;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;">STEP 3</span>
+          <span style="font-size:13px;font-weight:600;color:#374151;">Wave C — 보고</span>
+          <span style="font-size:12px;color:#9ca3af;">— scores.json 완성 후 reporter 실행</span>
+        </div>
+        <div class="tmux-preview">
+          <div class="tmux-row">
+            <div class="tmux-pane pane-main">
+              <div class="pane-title">🔍 sq</div>
+              <div class="pane-content">✅ Wave B 완료<br>💾 커밋/푸시 완료</div>
+            </div>
+            <div class="wave-col">
               <div class="tmux-pane pane-small" style="border-color:#3a3a5e;">
+                <div class="pane-title" style="color:#4c9a6a;">📊 scorer ✓</div>
+                <div class="pane-content" style="color:#4c9a6a;">scores.json 저장 완료</div>
+              </div>
+            </div>
+            <div class="wave-col">
+              <div class="tmux-pane pane-small" style="border-color:#3a2a4a;">
                 <div class="pane-title" style="color:#bb9af7;">📝 reporter</div>
                 <div class="pane-content">리포트 생성 중</div>
               </div>
@@ -824,7 +859,7 @@
         </div>
       </div>
 
-      <div style="margin-top:12px;font-size:12px;color:#9ca3af;text-align:right;">Wave B 완료 후 A+B 패널 모두 자동 닫힘 → 메인 복귀</div>
+      <div style="margin-top:12px;font-size:12px;color:#9ca3af;text-align:right;">Wave C 완료 후 A+B+C 패널 모두 자동 닫힘 → 메인 복귀</div>
     </div>
 
   </div>

@@ -412,6 +412,7 @@
   }
   .badge-blue   { background: #eff6ff; color: #2563eb; }
   .badge-green  { background: #f0fdf4; color: #16a34a; }
+  .badge-violet { background: #f5f3ff; color: #7c3aed; }
   .badge-amber  { background: #fffbeb; color: #d97706; }
   .badge-red    { background: #fef2f2; color: #dc2626; }
   .badge-cyan   { background: #ecfeff; color: #0891b2; }
@@ -522,9 +523,13 @@
 <span class="flow-arrow">↓</span>
 <span class="flow-git">💾 커밋/푸시</span>  Wave A 완료 후 자동 커밋
 <span class="flow-arrow">↓</span>
-<span class="flow-phase">Phase 3</span>  Wave B (scorer · reporter)  ← A 패널 유지된 채 시작
+<span class="flow-phase">Phase 3</span>  Wave B (scorer)  ← A 패널 유지된 채 시작
 <span class="flow-arrow">↓</span>
-<span class="flow-git">💾 커밋/푸시</span>  Wave B 완료 후 자동 커밋  →  A+B 패널 정리
+<span class="flow-git">💾 커밋/푸시</span>  Wave B 완료 후 자동 커밋
+<span class="flow-arrow">↓</span>
+<span class="flow-phase">Phase 3</span>  Wave C (reporter)  ← scores.json 완성 후 시작
+<span class="flow-arrow">↓</span>
+<span class="flow-git">💾 커밋/푸시</span>  Wave C 완료 후 자동 커밋  →  A+B+C 패널 정리
 <span class="flow-arrow">↓</span>
 <span class="flow-phase">스냅샷 비교</span>  snapshot_after() 디스패처  <span class="flow-desc">← Wave A에 opensearch/api 있으면 DB 스냅샷 / eval-only면 이전 run scores.json 비교 (개선/하락 top 10)</span>
 <span class="flow-arrow">↓</span>
@@ -649,7 +654,7 @@ EOF</div>
         <div class="section-num">5</div>
         <div class="section-title">Agent 파일 설치</div>
       </div>
-      <p>sq가 선택해서 실행하는 에이전트 정의 파일입니다. Wave A(분석/실행) / B(평가/보고)로 분류됩니다.</p>
+      <p>sq가 선택해서 실행하는 에이전트 정의 파일입니다. Wave A(분석/실행) / B(채점) / C(보고)로 분류됩니다.</p>
 
       <table>
         <thead>
@@ -660,7 +665,7 @@ EOF</div>
           <tr><td>🔌 api</td><td><span class="badge badge-blue">Wave A</span></td><td>검색 API 파라미터 분석, 스크립트 수정, 응답 파싱 검증</td></tr>
           <tr><td>🏃 runner</td><td><span class="badge badge-blue">Wave A</span></td><td>자동 검색 실행, 50개 단위 배치, JSON 결과 즉시 저장</td></tr>
           <tr><td>📊 scorer</td><td><span class="badge badge-green">Wave B</span></td><td>100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분. 평가 항목: 결과존재(20)·관련성 연속값(30)·이중의도 DB필수(20)·상위노출(15)·품절노출(15). 폴백(total_count &gt; 3000) 우선 감지 → F/FALLBACK 처리. <strong>LLM이 각 상품 관련성을 직접 Y/N 판단</strong> (문자열 매칭 코드 금지). relevance_ratio 항상 0.0~1.0 소수점 비율로 계산 (0.0 고정 금지). 결과를 Write 툴로 <code>scores.json</code>에 직접 저장. <strong>절대 금지:</strong> score.py·batch_score.sh 등 스크립트 생성, psql을 Python 경유 실행</td></tr>
-          <tr><td>📝 reporter</td><td><span class="badge badge-green">Wave B</span></td><td><code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). <strong><code>scores.json</code>이 유일한 채점 소스</strong> — 집계·포매팅만 수행. GENERAL/FALLBACK/ZERO_RESULT 세그먼트 분리 통계 포함. <strong>절대 금지:</strong> 독립 채점, scorer_reporter.py 등 독립 스크립트 생성, 점수 수정</td></tr>
+          <tr><td>📝 reporter</td><td><span class="badge badge-violet">Wave C</span></td><td><code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). <strong><code>scores.json</code>이 유일한 채점 소스</strong> — 집계·포매팅만 수행. GENERAL/FALLBACK/ZERO_RESULT 세그먼트 분리 통계 포함. <strong>절대 금지:</strong> 독립 채점, scorer_reporter.py 등 독립 스크립트 생성, 점수 수정</td></tr>
         </tbody>
       </table>
 
@@ -751,7 +756,7 @@ which sq  <span class="cm"># → /Users/[이름]/.local/bin/sq</span></div>
         </li>
         <li>
           <div class="li-num">2</div>
-          <div><strong>중간 커밋/푸시</strong> — Wave A 완료 후 (<code>sq: ... — 분석</code>), Wave B 완료 후 (<code>sq: ... — 평가</code>), 자동 수정 라운드마다 자동 커밋. 변경사항 없으면 스킵.</div>
+          <div><strong>중간 커밋/푸시</strong> — Wave A 완료 후 (<code>sq: ... — 분석</code>), Wave B 완료 후 (<code>sq: ... — 채점</code>), Wave C 완료 후 (<code>sq: ... — 평가</code>), 자동 수정 라운드마다 자동 커밋. 변경사항 없으면 스킵.</div>
         </li>
         <li>
           <div class="li-num">3</div>
@@ -895,15 +900,32 @@ EOF
       </div>
 
       <h3>Wave 레이아웃</h3>
-      <div class="tmux-box">┌──────────────┬─────────────┬─────────────┐
+      <div class="tmux-box">Wave A (실행 중)
+┌──────────────┬─────────────┐
+│  🔍 sq       │ 🔎 opensrch │
+│  (메인)      │─────────────│
+│              │ 🔌 api      │
+│              │─────────────│
+│              │ 🏃 runner   │
+└──────────────┴─────────────┘
+  ↓ Wave A 완료 · 커밋/푸시
+
+Wave B (채점)
+┌──────────────┬─────────────┬─────────────┐
 │  🔍 sq       │ 🔎 opensrch │ 📊 scorer   │
-│  (메인)      │─────────────│─────────────│
-│              │ 🔌 api      │ 📝 reporter │
+│  (메인)      │─────────────│             │
+│              │ 🔌 api      │             │
 │              │─────────────│             │
 │              │ 🏃 runner   │             │
 └──────────────┴─────────────┴─────────────┘
-  Wave A 완료 후 Wave B 열림 (A 유지)
-  Wave B 완료 후 A+B 모두 닫힘 → 메인 복귀</div>
+  ↓ Wave B 완료 · 커밋/푸시
+
+Wave C (보고)
+┌──────────────┬─────────────┬─────────────┐
+│  🔍 sq       │ 📊 scorer ✓ │ 📝 reporter │
+│  (메인)      │             │             │
+└──────────────┴─────────────┴─────────────┘
+  Wave C 완료 후 A+B+C 모두 닫힘 → 메인 복귀</div>
     </div>
 
     <!-- ── 9. 프로젝트별 설정 ── -->
