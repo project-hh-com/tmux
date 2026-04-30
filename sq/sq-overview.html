@@ -626,6 +626,23 @@
           <div class="step-label">중간 Git</div>
           <div class="step-title">Wave A 완료 후 커밋 / Wave B 완료 후 커밋</div>
           <div class="step-desc">각 Wave 완료 시 변경사항 자동 <code>git add -A</code> → commit → push. 변경사항 없으면 스킵.</div>
+          <div class="step-tags">
+            <span class="tag c-teal">에이전트 .sh 스크립트에 <code>source ~/.config/sq/db.env</code> 자동 포함 — 새 tmux 패널도 DB 자동 연결</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-teal">📸</div>
+        <div class="step-body">
+          <div class="step-label">스냅샷 비교 (eval-only)</div>
+          <div class="step-title">snapshot_after() — agents_wave_a.txt 구성에 따라 분기</div>
+          <div class="step-desc">Wave A에 opensearch/api 에이전트가 <strong>있으면</strong> DB 스냅샷(before/after 비교). <strong>없으면</strong>(runner+scorer+reporter만 있는 eval-only 실행) 이전 run의 <code>scores.json</code>과 현재 run을 비교해 평균 점수·세그먼트·등급 분포·개선/하락 키워드 top 10을 출력. before/after가 항상 동일하던 문제 해결.</div>
+          <div class="step-tags">
+            <span class="tag c-blue">opensearch/api 포함 → DB 스냅샷 비교</span>
+            <span class="tag c-green">eval-only → 이전 run scores.json 비교</span>
+            <span class="tag c-cyan">개선/하락 키워드 top 10 자동 출력</span>
+          </div>
         </div>
       </div>
 
@@ -680,12 +697,13 @@
         <div class="step-body">
           <div class="step-label">Phase 6 — 항상 실행</div>
           <div class="step-title">릴리스 매니저 — 최종 커밋 / 푸시 / PR 생성</div>
-          <div class="step-desc">게이트 통과 여부와 무관하게 무조건 실행. 미커밋 변경사항 정리 → push → PR 생성 또는 업데이트. 기존 PR 있으면 본문 업데이트.</div>
+          <div class="step-desc">게이트 통과 여부와 무관하게 무조건 실행. 미커밋 변경사항 정리 → push → PR 생성 또는 업데이트. 기존 PR 있으면 본문 업데이트. <strong>릴리스 매니저 종료 후</strong> SUMMARY.md와 TIMELINE.md가 확정되면 최종 <code>git add -A → commit → push</code> 자동 실행 — 팀원들이 PR에서 전체 타임라인과 실행 요약을 볼 수 있음.</div>
           <div class="step-tags">
             <span class="tag c-green">게이트 통과 → 일반 PR</span>
             <span class="tag c-amber">게이트 실패 → Draft PR</span>
             <span class="tag c-cyan">라벨: Search Quality 필수</span>
             <span class="tag c-red">prd/master 베이스 금지</span>
+            <span class="tag c-teal">SUMMARY.md · TIMELINE.md 최종 커밋/푸시 포함</span>
           </div>
         </div>
       </div>
@@ -721,13 +739,13 @@
           <div class="agent-emoji">📊</div>
           <div class="agent-name">scorer</div>
           <div class="agent-wave wave-b">Wave B</div>
-          <div class="agent-desc">100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분. <strong>DB:</strong> product_displays로 실제 상품 정보 검증</div>
+          <div class="agent-desc">100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분. LLM이 각 상품 관련성을 직접 Y/N 판단. relevance_ratio 항상 0.0~1.0 소수점 비율로 계산. 결과를 Write 툴로 <code>scores.json</code>에 직접 저장. <strong>절대 금지:</strong> score.py 등 스크립트 생성, 문자열 매칭 코드 작성. <strong>DB:</strong> product_displays로 실제 상품 정보 검증</div>
         </div>
         <div class="agent-card">
           <div class="agent-emoji">📝</div>
           <div class="agent-name">reporter</div>
           <div class="agent-wave wave-b">Wave B</div>
-          <div class="agent-desc">리포트 생성: <code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). 세그먼트별 분리 통계(GENERAL/FALLBACK/ZERO_RESULT) 포함. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
+          <div class="agent-desc">리포트 생성: <code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). <code>scores.json</code>이 유일한 채점 소스 — 집계·포매팅만 수행. 독립 채점 및 점수 수정 금지. 세그먼트별 분리 통계(GENERAL/FALLBACK/ZERO_RESULT) 포함. <strong>DB:</strong> keyword_relations 커버리지 · 기대 상품수 비교</div>
         </div>
       </div>
     </div>
@@ -1062,6 +1080,11 @@
           <li>모든 프롬프트는 파일 경로 참조 방식 — OS 인자 한도 초과 없음</li>
           <li>에이전트가 danble 운영 DB에 직접 쿼리 — 실제 키워드·점수·상품 데이터 기반 분석</li>
           <li>DB 자격증명은 <code>~/.config/sq/db.env</code>에만 보관 — git 저장소에 절대 포함되지 않음</li>
+          <li>에이전트 .sh 스크립트에 <code>source ~/.config/sq/db.env</code> 자동 포함 — tmux 새 패널도 PGHOST 등 DB 환경변수 자동 상속</li>
+          <li>eval-only 실행(runner+scorer+reporter만) 시 이전 run <code>scores.json</code>과 비교 — 평균 점수·세그먼트·등급 분포·개선/하락 키워드 top 10 자동 출력</li>
+          <li>scorer는 LLM이 각 상품 관련성을 직접 Y/N 판단 — 문자열 매칭 코드 금지, <code>scores.json</code>을 Write 툴로 직접 저장</li>
+          <li>reporter는 <code>scores.json</code>만 참조해 집계·포매팅 — 독립 채점·점수 수정 금지</li>
+          <li>SUMMARY.md · TIMELINE.md는 릴리스 매니저 종료 후 최종 커밋/푸시 — PR에서 전체 실행 기록 확인 가능</li>
         </ul>
       </div>
     </div>

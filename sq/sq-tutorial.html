@@ -526,6 +526,8 @@
 <span class="flow-arrow">↓</span>
 <span class="flow-git">💾 커밋/푸시</span>  Wave B 완료 후 자동 커밋  →  A+B 패널 정리
 <span class="flow-arrow">↓</span>
+<span class="flow-phase">스냅샷 비교</span>  snapshot_after() 디스패처  <span class="flow-desc">← Wave A에 opensearch/api 있으면 DB 스냅샷 / eval-only면 이전 run scores.json 비교 (개선/하락 top 10)</span>
+<span class="flow-arrow">↓</span>
 <span class="flow-debate">Debate 2</span>  분석 결과 토론  REWORK 시 Wave 재실행 (횟수 무제한)
 <span class="flow-arrow">↓</span>
 <span class="flow-phase">Phase 3.5</span>  사이드 이펙트 영향도 분석  <span class="flow-desc">← 변경 파일 분류 · 영향 범위 예측 · 위험도 평가</span>
@@ -657,8 +659,8 @@ EOF</div>
           <tr><td>🔎 opensearch</td><td><span class="badge badge-blue">Wave A</span></td><td>OpenSearch 쿼리 DSL, boost/weight 최적화, 인덱스 매핑 검토</td></tr>
           <tr><td>🔌 api</td><td><span class="badge badge-blue">Wave A</span></td><td>검색 API 파라미터 분석, 스크립트 수정, 응답 파싱 검증</td></tr>
           <tr><td>🏃 runner</td><td><span class="badge badge-blue">Wave A</span></td><td>자동 검색 실행, 50개 단위 배치, JSON 결과 즉시 저장</td></tr>
-          <tr><td>📊 scorer</td><td><span class="badge badge-green">Wave B</span></td><td>100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분. 평가 항목: 결과존재(20)·관련성 연속값(30)·이중의도 DB필수(20)·상위노출(15)·품절노출(15). 폴백(total_count &gt; 3000) 우선 감지 → F/FALLBACK 처리</td></tr>
-          <tr><td>📝 reporter</td><td><span class="badge badge-green">Wave B</span></td><td><code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). GENERAL/FALLBACK/ZERO_RESULT 세그먼트 분리 통계 포함</td></tr>
+          <tr><td>📊 scorer</td><td><span class="badge badge-green">Wave B</span></td><td>100점 만점 품질 점수 산정, A/B/C/D/F 등급 배분. 평가 항목: 결과존재(20)·관련성 연속값(30)·이중의도 DB필수(20)·상위노출(15)·품절노출(15). 폴백(total_count &gt; 3000) 우선 감지 → F/FALLBACK 처리. <strong>LLM이 각 상품 관련성을 직접 Y/N 판단</strong> (문자열 매칭 코드 금지). relevance_ratio 항상 0.0~1.0 소수점 비율로 계산 (0.0 고정 금지). 결과를 Write 툴로 <code>scores.json</code>에 직접 저장. <strong>절대 금지:</strong> score.py·batch_score.sh 등 스크립트 생성, psql을 Python 경유 실행</td></tr>
+          <tr><td>📝 reporter</td><td><span class="badge badge-green">Wave B</span></td><td><code>search-quality-report.md</code> · <code>search-quality-detail.csv</code> → <code>docs/reports/sq-{timestamp}/</code> 저장 (실행 폴더 기준). <strong><code>scores.json</code>이 유일한 채점 소스</strong> — 집계·포매팅만 수행. GENERAL/FALLBACK/ZERO_RESULT 세그먼트 분리 통계 포함. <strong>절대 금지:</strong> 독립 채점, scorer_reporter.py 등 독립 스크립트 생성, 점수 수정</td></tr>
         </tbody>
       </table>
 
@@ -755,6 +757,10 @@ which sq  <span class="cm"># → /Users/[이름]/.local/bin/sq</span></div>
           <div class="li-num">3</div>
           <div><strong>PR 생성 (항상 실행)</strong> — CI 게이트 통과 여부와 무관하게 Phase 6에서 항상 PR을 생성. 게이트 실패 시 Draft PR, 통과 시 일반 PR. 라벨 <code>Search Quality</code> 자동 부착.</div>
         </li>
+        <li>
+          <div class="li-num">4</div>
+          <div><strong>릴리스 로그 최종 커밋</strong> — 릴리스 매니저 종료 후 SUMMARY.md와 TIMELINE.md가 확정되면 <code>git add -A → commit → push</code> 자동 실행. 팀원들이 PR에서 전체 타임라인과 실행 요약을 확인할 수 있음.</div>
+        </li>
       </ul>
 
       <div class="notice danger">
@@ -810,6 +816,14 @@ which sq  <span class="cm"># → /Users/[이름]/.local/bin/sq</span></div>
         </li>
       </ul>
 
+      <div class="notice tip">
+        <div class="notice-icon">🔗</div>
+        <div class="notice-text">
+          <div class="notice-title">에이전트 DB 자동 연결</div>
+          sq가 각 에이전트를 실행할 때 생성하는 .sh 스크립트에 <code>source ~/.config/sq/db.env</code>가 자동 포함됩니다. tmux 새 패널은 부모 환경을 상속하지 못해 PGHOST 등이 비어있을 수 있는데, 이 방식으로 모든 에이전트가 DB에 자동 접속합니다. <strong>sq-setup 최초 1회</strong>만 실행하면 이후 모든 에이전트 실행 시 자동 연결됩니다.
+        </div>
+      </div>
+
       <h3>에이전트별 DB 활용</h3>
       <table>
         <thead>
@@ -830,11 +844,11 @@ which sq  <span class="cm"># → /Users/[이름]/.local/bin/sq</span></div>
           </tr>
           <tr>
             <td>📊 scorer</td>
-            <td><code>search_keywords</code>로 keyword_id 조회 · <code>search_category/brand_keywords</code>로 이중의도 판별 · <code>product_displays</code>로 품절률(soldout_rate) 측정</td>
+            <td><code>search_keywords</code>로 keyword_id 조회 · <code>search_category/brand_keywords</code>로 이중의도 판별 · <code>product_displays</code>로 품절률(soldout_rate) 측정. LLM이 각 상품 관련성 직접 Y/N 판단 후 Write 툴로 <code>scores.json</code> 저장.</td>
           </tr>
           <tr>
             <td>📝 reporter</td>
-            <td><code>search_keyword_relations</code> 커버리지 · DB 기준 기대 상품수 vs 실제 결과수 비교 · 세그먼트별(GENERAL/FALLBACK/ZERO_RESULT) 분리 집계 포함</td>
+            <td><code>search_keyword_relations</code> 커버리지 · DB 기준 기대 상품수 vs 실제 결과수 비교 · 세그먼트별(GENERAL/FALLBACK/ZERO_RESULT) 분리 집계 포함. <code>scores.json</code>만 참조하여 집계·포매팅 수행 (독립 채점 금지).</td>
           </tr>
         </tbody>
       </table>
@@ -1018,6 +1032,26 @@ EOF</div>
 
 📦 Phase 6: 릴리스 매니저 실행 중...
   ✅ PR 생성: https://github.com/.../pull/17</div>
+
+      <h3>eval-only 실행 (스냅샷 비교)</h3>
+      <p>opensearch/api 에이전트 없이 runner+scorer+reporter만 실행하면 eval-only 모드로 동작합니다. Wave A에 DB 변경 에이전트가 없으므로 before/after DB 스냅샷 대신 이전 run의 <code>scores.json</code>과 비교합니다.</p>
+
+      <div class="code-block">
+        <div class="code-header">terminal — eval-only 실행 예시</div>
+        <div class="code-body"><span class="cm"># 평가만 실행 (OpenSearch/API 변경 없이 점수·리포트만)</span>
+<span class="cv">sq</span> <span class="cs">"40~50대 남성 패션 키워드 500개 검색 품질 평가"</span>
+<span class="cm"># → runner + scorer + reporter만 선택됨 (eval-only)</span>
+<span class="cm"># → Wave B 완료 후 이전 run scores.json과 자동 비교</span>
+<span class="cm"># → 개선/하락 키워드 top 10 출력</span></div>
+      </div>
+
+      <div class="notice info">
+        <div class="notice-icon">📊</div>
+        <div class="notice-text">
+          <div class="notice-title">eval-only 스냅샷 비교 출력 항목</div>
+          이전 run과 현재 run을 자동으로 비교해 다음을 출력합니다: 평균 점수 변화 · 세그먼트별 분포(GENERAL/FALLBACK/ZERO_RESULT) · 등급 분포(A~F) · 개선 키워드 top 10 · 하락 키워드 top 10. 이전 run 데이터가 없으면 현재 run만 출력합니다.
+        </div>
+      </div>
 
       <h3>tmux 단축키</h3>
       <table>
