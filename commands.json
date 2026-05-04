@@ -20,6 +20,16 @@
     "overview": "sq/sq-overview.html"
   },
   {
+    "name": "skq",
+    "icon": "🎯",
+    "status": "stable",
+    "statusLabel": "Stable",
+    "desc": "검색 키워드 품질 자동 개선. 6-Wave 직렬 멀티에이전트: Discovery → Analysis → Propose(4 병렬) → Debate → Ship-Ready → Validate. ship 명령어로 SQL 적용.",
+    "tags": ["Search Keyword Quality", "6-Wave", "Multi-Agent", "SQL"],
+    "tutorial": null,
+    "overview": "skq/skq-overview.html"
+  },
+  {
     "name": "fix",
     "icon": "⚡",
     "status": "soon",
