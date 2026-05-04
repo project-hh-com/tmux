@@ -1,0 +1,1 @@
+# skq — Search Keyword Quality

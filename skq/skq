@@ -1,0 +1,899 @@
+#!/usr/bin/env bash
+# skq — Search Keyword Quality 개선 워크플로 (6-Wave 직렬 멀티에이전트)
+# 사용법: skq              → 전체 검색 키워드 품질 자동 개선
+#         skq "특정 범위"  → 범위/목적을 지정해 실행
+#
+# 워크플로:
+#   Wave A: Discovery  — DB 기반 개선 대상 키워드 자동 발굴
+#   Wave B: Analysis   — OpenSearch 시나리오 분류 + 전략 설계
+#   Wave C: Propose    — 시나리오별 병렬 SQL 제안 (4 에이전트)
+#   Wave D: Debate     — Red/Blue/Judge 안전성 검증 (2라운드)
+#   Wave E: Ship-Ready — 최종 SQL 패키징 + 매니페스트 생성
+#   Wave F: Validate   — 예상 개선도 추정 + 리포트
+#
+# 출력: .agent/skq-{DATE}/ 폴더 내 각 Wave 결과물
+# 적용: ship 명령어로 ship.sql 검토 후 실행
+
+set -euo pipefail
+
+SCOPE="${1:-전체 검색 키워드 품질 개선 — 검색 정확도 및 결과 노출 향상}"
+
+# ── 날짜 / 실행 ID ────────────────────────────────────────────
+RUN_DATE="$(date +%Y%m%d-%H%M%S)"
+RUN_ID="skq-${RUN_DATE}"
+FLAG_DIR=".agent/${RUN_ID}"
+OUTPUT_DIR="docs/reports/${RUN_ID}"
+
+mkdir -p "${FLAG_DIR}" "${OUTPUT_DIR}"
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🔍 SKQ — Search Keyword Quality 개선 워크플로"
+echo "  실행 ID: ${RUN_ID}"
+echo "  범위: ${SCOPE}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ── PostgreSQL 접속 정보 ──────────────────────────────────────
+SQ_DB_ENV="${HOME}/.config/sq/db.env"
+if [[ -f "${SQ_DB_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  source "${SQ_DB_ENV}"
+else
+  echo "⚠️  DB 자격증명 파일이 없습니다: ${SQ_DB_ENV}"
+  echo "   skq-setup을 먼저 실행하세요."
+  exit 1
+fi
+
+PGHOST="${PGHOST:-}"
+PGDATABASE="${PGDATABASE:-danble}"
+PGUSER="${PGUSER:-danble_read_only}"
+PGPASSWORD="${PGPASSWORD:-}"
+PGPORT="${PGPORT:-5432}"
+PGSSLMODE="${PGSSLMODE:-require}"
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+
+SQ_PSQL="PGPASSWORD=${PGPASSWORD} psql -h ${PGHOST} -U ${PGUSER} -d ${PGDATABASE} -p ${PGPORT} --no-password"
+
+# ── 공통 문서 컨텍스트 ────────────────────────────────────────
+SKQ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIPELINE_DOC="${SKQ_DIR}/docs/search-pipeline.md"
+SCHEMA_DOC="${SKQ_DIR}/docs/db-schema.md"
+
+DOCS_CONTEXT=""
+if [[ -f "${PIPELINE_DOC}" ]]; then
+  DOCS_CONTEXT+="$(cat "${PIPELINE_DOC}")"$'\n\n'
+fi
+if [[ -f "${SCHEMA_DOC}" ]]; then
+  DOCS_CONTEXT+="$(cat "${SCHEMA_DOC}")"
+fi
+
+# ── DB 스키마 & 쿼리 컨텍스트 ────────────────────────────────
+DB_CONTEXT=$(cat << 'DBEOF'
+## PostgreSQL DB 접근 (danble read-only replica)
+
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있음.
+접속 명령 예시:
+  PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" --no-password -c "SELECT ..."
+
+### 주요 테이블
+
+| 테이블 | 설명 |
+|--------|------|
+| `search_keywords` | 검색어 사전 (keyword, keyword_type, category_main, priority, result_product_count, rank) |
+| `search_keyword_relations` | 동의어·유사어 관계 (relation_type: SAME=동의어, SIMILAR=유사어) |
+| `search_brand_keywords` | 브랜드 발골사전 (brand_id, search_keyword_id) |
+| `search_category_keywords` | 카테고리 발골사전 (product_midtype_ids, product_subtype_ids, requires_name_search) |
+| `search_color_keywords` | 색상 발골사전 (variant_ids) |
+| `search_keyword_rankings` | 키워드 통계 (result_product_count, rank, md_score, auto_score) |
+
+### KeywordType: BRAND | CATEGORY | COLOR | ETC
+### KeywordRelationType: SAME (동의어, Tier1+2) | SIMILAR (유사어, Tier2만)
+
+⚠️ SELECT만 가능 (read-only). INSERT/UPDATE/DELETE 불가 → SQL 파일로 출력.
+DBEOF
+)
+
+# ── Wave 완료 게이트 함수 ─────────────────────────────────────
+wait_wave() {
+  local wave="$1"
+  local flag_file="${FLAG_DIR}/wave_${wave}_done"
+  local timeout=600
+  local elapsed=0
+
+  echo "     ⏳ Wave ${wave} 완료 대기..."
+  while [[ ! -f "${flag_file}" ]]; do
+    sleep 5
+    elapsed=$((elapsed + 5))
+    if [[ ${elapsed} -ge ${timeout} ]]; then
+      echo "     ❌ Wave ${wave} 타임아웃 (${timeout}s). 종료합니다."
+      exit 1
+    fi
+  done
+  echo "     ✅ Wave ${wave} 완료"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Wave A — Discovery: DB 기반 개선 대상 키워드 발굴
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│  Wave A — Discovery: 개선 대상 키워드 발굴               │"
+echo "└─────────────────────────────────────────────────────────┘"
+
+WAVE_A_PROMPT=$(cat << WAVEAEOF
+# SKQ Wave A — Discovery Agent
+
+당신은 Danble 검색 키워드 품질 개선을 위한 Discovery 에이전트입니다.
+목표: DB에서 검색 품질 개선이 필요한 키워드를 체계적으로 발굴합니다.
+
+## 실행 범위
+${SCOPE}
+
+## 검색 파이프라인 & DB 스키마
+${DOCS_CONTEXT}
+
+## DB 접근
+${DB_CONTEXT}
+
+## 발굴 쿼리 (4종 실행)
+
+### Q1: ZERO_UNRECOGNIZED 후보 (사전 미등록 → 즉시 빈 결과)
+\`\`\`sql
+SELECT sk.id, sk.keyword, sk.keyword_type, sk.category_main,
+       skr.result_product_count, sk.rank
+FROM search_keywords sk
+LEFT JOIN search_keyword_rankings skr ON skr.search_keyword_id = sk.id
+WHERE skr.result_product_count = 0
+  AND sk.is_deleted = false
+ORDER BY sk.rank ASC NULLS LAST
+LIMIT 30;
+\`\`\`
+
+### Q2: ETC_TYPE 후보 (keyword_type=ETC → 분류 필요)
+\`\`\`sql
+SELECT sk.id, sk.keyword, sk.keyword_type, sk.category_main,
+       skr.result_product_count, sk.rank
+FROM search_keywords sk
+LEFT JOIN search_keyword_rankings skr ON skr.search_keyword_id = sk.id
+WHERE sk.keyword_type = 'ETC'
+  AND sk.is_deleted = false
+ORDER BY sk.rank ASC NULLS LAST
+LIMIT 30;
+\`\`\`
+
+### Q3: NO_SYNONYM 후보 (SAME 동의어 없음 → Tier1 확장 불가)
+\`\`\`sql
+SELECT sk.id, sk.keyword, sk.keyword_type, skr.result_product_count, sk.rank
+FROM search_keywords sk
+LEFT JOIN search_keyword_rankings skr ON skr.search_keyword_id = sk.id
+WHERE sk.is_deleted = false
+  AND skr.result_product_count > 0
+  AND NOT EXISTS (
+    SELECT 1 FROM search_keyword_relations skrel
+    WHERE skrel.source_keyword_id = sk.id
+      AND skrel.relation_type = 'SAME'
+  )
+ORDER BY sk.rank ASC NULLS LAST
+LIMIT 30;
+\`\`\`
+
+### Q4: POSSIBLE_FALLBACK 후보 (발골사전 미연결 → 텍스트 검색만)
+\`\`\`sql
+SELECT sk.id, sk.keyword, sk.keyword_type, sk.category_main,
+       skr.result_product_count, sk.rank
+FROM search_keywords sk
+LEFT JOIN search_keyword_rankings skr ON skr.search_keyword_id = sk.id
+WHERE sk.keyword_type IN ('BRAND', 'CATEGORY', 'COLOR')
+  AND sk.is_deleted = false
+  AND NOT EXISTS (
+    SELECT 1 FROM search_brand_keywords WHERE search_keyword_id = sk.id
+    UNION ALL
+    SELECT 1 FROM search_category_keywords WHERE search_keyword_id = sk.id
+    UNION ALL
+    SELECT 1 FROM search_color_keywords WHERE search_keyword_id = sk.id
+  )
+ORDER BY sk.rank ASC NULLS LAST
+LIMIT 30;
+\`\`\`
+
+## 출력 요구사항
+
+1. 위 4개 쿼리를 Bash 툴로 직접 실행
+2. 결과를 분석하여 개선 우선순위 결정
+3. 다음 파일 생성:
+   - \`${FLAG_DIR}/discovery.json\`: 발굴된 키워드 목록 (구조화)
+   - \`${OUTPUT_DIR}/wave-a-discovery.md\`: 발굴 결과 분석 리포트
+
+### discovery.json 형식
+\`\`\`json
+{
+  "run_id": "${RUN_ID}",
+  "scope": "${SCOPE}",
+  "discovered_at": "ISO 날짜",
+  "zero_unrecognized": [
+    {"id": 1, "keyword": "린넨셔츠", "rank": 5, "result_product_count": 0}
+  ],
+  "etc_type": [
+    {"id": 2, "keyword": "Y2K", "rank": 15, "current_type": "ETC"}
+  ],
+  "no_synonym": [
+    {"id": 3, "keyword": "청바지", "rank": 3, "result_product_count": 120}
+  ],
+  "possible_fallback": [
+    {"id": 4, "keyword": "ZARA", "keyword_type": "BRAND", "rank": 8}
+  ],
+  "summary": {
+    "total_issues": 42,
+    "priority_order": ["ZERO_UNRECOGNIZED", "ETC_TYPE", "NO_SYNONYM", "POSSIBLE_FALLBACK"]
+  }
+}
+\`\`\`
+
+4. 완료 후 반드시 실행:
+\`\`\`bash
+touch "${FLAG_DIR}/wave_A_done"
+\`\`\`
+WAVEAEOF
+)
+
+echo "${WAVE_A_PROMPT}" > "${FLAG_DIR}/wave_a_prompt.md"
+
+claude --dangerously-skip-permissions -p "${WAVE_A_PROMPT}" &
+WAVE_A_PID=$!
+
+echo "     Wave A 에이전트 시작 (PID: ${WAVE_A_PID})"
+wait "${WAVE_A_PID}" || true
+
+if [[ ! -f "${FLAG_DIR}/wave_A_done" ]]; then
+  echo "     ❌ Wave A 실패 — discovery.json 미생성"
+  exit 1
+fi
+echo "     ✅ Wave A 완료"
+
+# ═══════════════════════════════════════════════════════════════
+# Wave B — Analysis: 시나리오 분류 + 전략 설계
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│  Wave B — Analysis: 시나리오 분류 + 수정 전략 설계       │"
+echo "└─────────────────────────────────────────────────────────┘"
+
+DISCOVERY_DATA="$(cat "${FLAG_DIR}/discovery.json" 2>/dev/null || echo '{}')"
+
+WAVE_B_PROMPT=$(cat << WAVEBEOF
+# SKQ Wave B — Analysis Agent
+
+당신은 Danble 검색 키워드 분석 전문 에이전트입니다.
+Wave A에서 발굴된 키워드를 분석하고 최적 수정 전략을 설계합니다.
+
+## Wave A 발굴 결과
+\`\`\`json
+${DISCOVERY_DATA}
+\`\`\`
+
+## 검색 파이프라인 & DB 스키마
+${DOCS_CONTEXT}
+
+## DB 접근
+${DB_CONTEXT}
+
+## 분석 작업
+
+각 발굴 키워드에 대해:
+
+1. **OpenSearch 시나리오 판별** (search-pipeline.md의 pipeline_scenario 기준)
+   - A.정밀_필터_브랜드: extracted_brands 있음
+   - A.정밀_필터_카테고리: extracted_category 있음
+   - B.색상_필터: extracted_colors만
+   - C.텍스트_검색: 발골 없음 → should 쿼리
+   - D1.ZERO_미등록: result=0 + ZERO_UNRECOGNIZED
+   - D2.ZERO_매칭없음: result=0 + ZERO_NO_MATCH
+   - E.판별불가: ETC_TYPE
+
+2. **수정 전략 결정** (diagnosis_code → fix_type 매핑)
+   | diagnosis_code | fix_type | 대상 테이블 |
+   |---------------|---------|-----------|
+   | ZERO_UNRECOGNIZED | INSERT_KEYWORD | search_keywords |
+   | ETC_TYPE | UPDATE_KEYWORD_TYPE | search_keywords |
+   | NO_SYNONYM | INSERT_SAME_SYNONYM | search_keyword_relations |
+   | POSSIBLE_FALLBACK (BRAND) | UPDATE_BRAND_ID | search_brand_keywords |
+   | POSSIBLE_FALLBACK (CATEGORY) | UPDATE_CATEGORY_MAPPING | search_category_keywords |
+   | ZERO_NO_MATCH | INSERT_SIMILAR_SYNONYM | search_keyword_relations |
+
+3. **추가 DB 조회** (필요 시)
+   - 후보 브랜드 ID 조회, 중분류 ID 조회 등
+
+## 출력 요구사항
+
+다음 파일 생성:
+- \`${FLAG_DIR}/analysis.json\`: 분석 결과 (구조화)
+- \`${OUTPUT_DIR}/wave-b-analysis.md\`: 분석 리포트
+
+### analysis.json 형식
+\`\`\`json
+{
+  "analyzed_keywords": [
+    {
+      "id": 1,
+      "keyword": "린넨셔츠",
+      "diagnosis_code": "ZERO_UNRECOGNIZED",
+      "pipeline_scenario": "D1.ZERO_미등록",
+      "fix_type": "INSERT_KEYWORD",
+      "proposed_keyword_type": "CATEGORY",
+      "proposed_category_main": "TOP",
+      "fix_priority": 1,
+      "rationale": "린넨 소재 셔츠 카테고리 키워드. 사전 등록 필요."
+    }
+  ],
+  "strategy_summary": {
+    "INSERT_KEYWORD": 5,
+    "UPDATE_KEYWORD_TYPE": 3,
+    "INSERT_SAME_SYNONYM": 8,
+    "UPDATE_BRAND_ID": 2,
+    "UPDATE_CATEGORY_MAPPING": 4,
+    "INSERT_SIMILAR_SYNONYM": 6
+  }
+}
+\`\`\`
+
+완료 후 반드시 실행:
+\`\`\`bash
+touch "${FLAG_DIR}/wave_B_done"
+\`\`\`
+WAVEBEOF
+)
+
+echo "${WAVE_B_PROMPT}" > "${FLAG_DIR}/wave_b_prompt.md"
+
+claude --dangerously-skip-permissions -p "${WAVE_B_PROMPT}" &
+WAVE_B_PID=$!
+
+echo "     Wave B 에이전트 시작 (PID: ${WAVE_B_PID})"
+wait "${WAVE_B_PID}" || true
+
+if [[ ! -f "${FLAG_DIR}/wave_B_done" ]]; then
+  echo "     ❌ Wave B 실패"
+  exit 1
+fi
+echo "     ✅ Wave B 완료"
+
+# ═══════════════════════════════════════════════════════════════
+# Wave C — Propose: 병렬 SQL 제안 (4 전문 에이전트)
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│  Wave C — Propose: 병렬 SQL 제안 (4 전문 에이전트)       │"
+echo "└─────────────────────────────────────────────────────────┘"
+
+ANALYSIS_DATA="$(cat "${FLAG_DIR}/analysis.json" 2>/dev/null || echo '{}')"
+
+# Wave C 공통 컨텍스트
+WAVE_C_COMMON=$(cat << WAVECCOMMON
+## 공통 컨텍스트
+
+### Wave B 분석 결과
+\`\`\`json
+${ANALYSIS_DATA}
+\`\`\`
+
+### DB 스키마 & 파이프라인
+${DOCS_CONTEXT}
+
+### DB 접근 (추가 조회용)
+${DB_CONTEXT}
+
+### SQL 작성 원칙
+- INSERT/UPDATE 전에 반드시 SELECT로 현재 상태 확인 후 작성
+- 각 SQL 앞에 -- 주석으로 키워드명, 이유, 기대효과 명시
+- 트랜잭션 단위로 묶어서 작성
+- 데이터 무결성: 중복 방지를 위해 INSERT ... ON CONFLICT DO NOTHING 또는 WHERE NOT EXISTS 사용
+- 실행 전 검증 SELECT 문 함께 제공
+WAVECCOMMON
+)
+
+# ── C1: zero_fixer — ZERO_UNRECOGNIZED + ZERO_NO_MATCH ───────
+ZERO_FIXER_PROMPT=$(cat << ZEROFIXEOF
+# SKQ Wave C1 — zero_fixer Agent
+
+당신은 검색 결과 0건 문제를 해결하는 전문 에이전트입니다.
+analysis.json에서 diagnosis_code가 ZERO_UNRECOGNIZED 또는 ZERO_NO_MATCH인 키워드만 처리합니다.
+
+${WAVE_C_COMMON}
+
+## 처리 유형
+
+### ZERO_UNRECOGNIZED (사전 미등록)
+→ search_keywords에 INSERT
+```sql
+-- 예시
+INSERT INTO search_keywords (keyword, keyword_type, category_main, priority, is_deleted, is_recommended, allow_rising)
+VALUES ('린넨셔츠', 'CATEGORY', 'TOP', 50, false, false, true)
+ON CONFLICT (keyword) DO NOTHING;
+```
+
+### ZERO_NO_MATCH (사전 있지만 매칭 상품 없음)
+→ search_keyword_relations에 SIMILAR 관계 INSERT
+```sql
+-- 예시
+INSERT INTO search_keyword_relations (source_keyword_id, target_keyword_id, relation_type, relation_score)
+SELECT s.id, t.id, 'SIMILAR', 0.8
+FROM search_keywords s, search_keywords t
+WHERE s.keyword = '청바지' AND t.keyword = '데님팬츠'
+ON CONFLICT (source_keyword_id, target_keyword_id) DO NOTHING;
+```
+
+## 출력
+- \`${FLAG_DIR}/c1_zero_fixer.sql\`: 생성된 SQL
+- \`${FLAG_DIR}/c1_zero_fixer_done\` 파일 생성 (완료 신호)
+
+SQL 파일 형식:
+\`\`\`sql
+-- ============================================
+-- SKQ Wave C1: zero_fixer
+-- 실행 ID: ${RUN_ID}
+-- 생성일: $(date)
+-- ============================================
+
+BEGIN;
+
+-- [ZERO_UNRECOGNIZED] 린넨셔츠
+-- 이유: 사전 미등록으로 즉시 빈 결과 반환
+-- 기대효과: TOP 카테고리 검색 결과 노출 시작
+INSERT INTO search_keywords ...;
+
+COMMIT;
+\`\`\`
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/c1_zero_fixer_done"
+\`\`\`
+ZEROFIXEOF
+)
+
+# ── C2: type_fixer — ETC_TYPE ─────────────────────────────────
+TYPE_FIXER_PROMPT=$(cat << TYPEFIXEOF
+# SKQ Wave C2 — type_fixer Agent
+
+당신은 keyword_type=ETC 문제를 해결하는 전문 에이전트입니다.
+analysis.json에서 diagnosis_code가 ETC_TYPE인 키워드만 처리합니다.
+
+${WAVE_C_COMMON}
+
+## 처리 유형: ETC_TYPE → 올바른 keyword_type으로 UPDATE
+```sql
+-- 예시: "Y2K"가 스타일 카테고리라면
+UPDATE search_keywords
+SET keyword_type = 'CATEGORY', category_main = 'ETC', updated_at = NOW()
+WHERE id = {id} AND keyword_type = 'ETC';
+
+-- keyword_type을 BRAND로 변경할 경우
+-- search_brand_keywords도 함께 처리 필요
+INSERT INTO search_brand_keywords (search_keyword_id, brand_id)
+VALUES ({keyword_id}, {brand_id})
+ON CONFLICT (search_keyword_id) DO UPDATE SET brand_id = EXCLUDED.brand_id;
+```
+
+## 출력
+- \`${FLAG_DIR}/c2_type_fixer.sql\`
+- \`${FLAG_DIR}/c2_type_fixer_done\` (완료 신호)
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/c2_type_fixer_done"
+\`\`\`
+TYPEFIXEOF
+)
+
+# ── C3: synonym_fixer — NO_SYNONYM ───────────────────────────
+SYNONYM_FIXER_PROMPT=$(cat << SYNFIXEOF
+# SKQ Wave C3 — synonym_fixer Agent
+
+당신은 동의어·유사어 관계 부재 문제를 해결하는 전문 에이전트입니다.
+analysis.json에서 diagnosis_code가 NO_SYNONYM인 키워드만 처리합니다.
+
+${WAVE_C_COMMON}
+
+## 처리 유형: NO_SYNONYM → SAME 동의어 추가
+```sql
+-- 예시: "바지"에 "팬츠" SAME 동의어 추가
+INSERT INTO search_keyword_relations (source_keyword_id, target_keyword_id, relation_type, relation_score)
+SELECT s.id, t.id, 'SAME', 1.0
+FROM search_keywords s, search_keywords t
+WHERE s.keyword = '바지' AND t.keyword = '팬츠'
+  AND NOT EXISTS (
+    SELECT 1 FROM search_keyword_relations
+    WHERE source_keyword_id = s.id AND target_keyword_id = t.id
+  );
+```
+
+주의: 대상 키워드(target)가 search_keywords에 없으면 먼저 INSERT해야 함.
+
+## 출력
+- \`${FLAG_DIR}/c3_synonym_fixer.sql\`
+- \`${FLAG_DIR}/c3_synonym_fixer_done\` (완료 신호)
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/c3_synonym_fixer_done"
+\`\`\`
+SYNFIXEOF
+)
+
+# ── C4: anchor_fixer — POSSIBLE_FALLBACK ────────────────────
+ANCHOR_FIXER_PROMPT=$(cat << ANCFIXEOF
+# SKQ Wave C4 — anchor_fixer Agent
+
+당신은 발골사전(브랜드/카테고리) 미연결 문제를 해결하는 전문 에이전트입니다.
+analysis.json에서 diagnosis_code가 POSSIBLE_FALLBACK인 키워드만 처리합니다.
+
+${WAVE_C_COMMON}
+
+## 처리 유형
+
+### BRAND 발골사전 연결 (brand_id UPDATE)
+```sql
+-- 먼저 브랜드 ID 확인 (brands 테이블)
+SELECT id, name FROM brands WHERE name ILIKE '%ZARA%' LIMIT 5;
+
+-- search_brand_keywords 연결
+UPDATE search_brand_keywords
+SET brand_id = {brand_id}, updated_at = NOW()
+WHERE search_keyword_id = {keyword_id};
+
+-- 없으면 INSERT
+INSERT INTO search_brand_keywords (search_keyword_id, brand_id)
+VALUES ({keyword_id}, {brand_id})
+ON CONFLICT (search_keyword_id) DO UPDATE SET brand_id = EXCLUDED.brand_id;
+```
+
+### CATEGORY 발골사전 연결 (midtype_ids UPDATE)
+```sql
+-- 먼저 중분류 ID 확인
+SELECT id, value FROM product_midtypes WHERE value ILIKE '%슬랙스%' LIMIT 5;
+
+-- search_category_keywords 연결
+UPDATE search_category_keywords
+SET product_midtype_ids = ARRAY[{midtype_id}], updated_at = NOW()
+WHERE search_keyword_id = {keyword_id};
+```
+
+## 출력
+- \`${FLAG_DIR}/c4_anchor_fixer.sql\`
+- \`${FLAG_DIR}/c4_anchor_fixer_done\` (완료 신호)
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/c4_anchor_fixer_done"
+\`\`\`
+ANCFIXEOF
+)
+
+# Wave C 병렬 실행
+echo "     4개 에이전트 병렬 실행..."
+
+claude --dangerously-skip-permissions -p "${ZERO_FIXER_PROMPT}" &
+C1_PID=$!
+
+claude --dangerously-skip-permissions -p "${TYPE_FIXER_PROMPT}" &
+C2_PID=$!
+
+claude --dangerously-skip-permissions -p "${SYNONYM_FIXER_PROMPT}" &
+C3_PID=$!
+
+claude --dangerously-skip-permissions -p "${ANCHOR_FIXER_PROMPT}" &
+C4_PID=$!
+
+echo "     C1 zero_fixer   PID: ${C1_PID}"
+echo "     C2 type_fixer   PID: ${C2_PID}"
+echo "     C3 synonym_fixer PID: ${C3_PID}"
+echo "     C4 anchor_fixer PID: ${C4_PID}"
+
+wait "${C1_PID}" || true
+wait "${C2_PID}" || true
+wait "${C3_PID}" || true
+wait "${C4_PID}" || true
+
+# Wave C 완료 확인
+C_DONE=0
+for agent in c1_zero_fixer c2_type_fixer c3_synonym_fixer c4_anchor_fixer; do
+  if [[ -f "${FLAG_DIR}/${agent}_done" ]]; then
+    echo "     ✅ ${agent} 완료"
+    C_DONE=$((C_DONE + 1))
+  else
+    echo "     ⚠️  ${agent} 미완료 (SQL 파일 확인 필요)"
+  fi
+done
+
+if [[ ${C_DONE} -eq 0 ]]; then
+  echo "     ❌ Wave C 전부 실패 — 종료합니다."
+  exit 1
+fi
+
+echo "     ✅ Wave C 완료 (${C_DONE}/4 에이전트)"
+touch "${FLAG_DIR}/wave_C_done"
+
+# ═══════════════════════════════════════════════════════════════
+# Wave D — Debate: Red/Blue/Judge 안전성 검증 (2라운드)
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│  Wave D — Debate: SQL 안전성 검증 (2라운드)              │"
+echo "└─────────────────────────────────────────────────────────┘"
+
+# SQL 파일 취합
+ALL_SQL=""
+for sql_file in "${FLAG_DIR}"/c*.sql; do
+  if [[ -f "${sql_file}" ]]; then
+    ALL_SQL+="-- ===== $(basename "${sql_file}") =====\n"
+    ALL_SQL+="$(cat "${sql_file}")\n\n"
+  fi
+done
+
+WAVE_D_PROMPT=$(cat << WAVEDEOF
+# SKQ Wave D — Debate Agent (Judge)
+
+당신은 SQL 안전성 검증 심판(Judge) 에이전트입니다.
+Wave C에서 생성된 SQL을 Red(공격)와 Blue(방어) 관점에서 2라운드 검토하고 최종 판정을 내립니다.
+
+## 검토 대상 SQL
+$(printf '%b' "${ALL_SQL}")
+
+## 검색 파이프라인 & DB 스키마
+${DOCS_CONTEXT}
+
+## 검증 프레임워크
+
+### Round 1: Red Team (위험 탐지)
+다음 관점에서 각 SQL의 문제점을 제기하세요:
+- 중복 데이터 위험 (ON CONFLICT 누락?)
+- 잘못된 키워드 타입 분류
+- 브랜드 ID 불일치 (실제 브랜드와 다른 ID?)
+- 카테고리 매핑 오류 (product_midtype_ids 범위 초과?)
+- SAME 동의어 양방향 처리 누락
+- 파이프라인 부작용 (CATEGORY > BRAND 우선 규칙 위반?)
+
+### Round 2: Blue Team (방어 + 개선)
+Red 팀 지적사항에 대한 방어 또는 SQL 수정안을 제시하세요.
+
+### Final: Judge 판정
+- APPROVE: 실행 가능 (원문 또는 수정안)
+- MODIFY: 수정 후 실행 가능 (수정안 제시)
+- REJECT: 실행 불가 (이유 명시)
+
+## 출력 요구사항
+
+1. \`${FLAG_DIR}/debate_report.md\`: 2라운드 토론 + 판정 결과
+2. \`${FLAG_DIR}/approved.sql\`: APPROVE/MODIFY 판정된 SQL만 (최종본)
+
+### approved.sql 형식
+\`\`\`sql
+-- ============================================
+-- SKQ Wave D: Debate-Approved SQL
+-- 실행 ID: ${RUN_ID}
+-- Judge 검토 완료: $(date)
+-- ============================================
+
+-- [APPROVED] ...
+-- [MODIFIED] ... (수정 이유 명시)
+
+BEGIN;
+...
+COMMIT;
+\`\`\`
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/wave_D_done"
+\`\`\`
+WAVEDEOF
+)
+
+echo "${WAVE_D_PROMPT}" > "${FLAG_DIR}/wave_d_prompt.md"
+
+claude --dangerously-skip-permissions -p "${WAVE_D_PROMPT}" &
+WAVE_D_PID=$!
+
+echo "     Wave D 에이전트 시작 (PID: ${WAVE_D_PID})"
+wait "${WAVE_D_PID}" || true
+
+if [[ ! -f "${FLAG_DIR}/wave_D_done" ]]; then
+  echo "     ⚠️  Wave D 미완료 — approved.sql 수동 확인 필요"
+  # approved.sql이 없으면 c*.sql 병합으로 대체
+  if [[ ! -f "${FLAG_DIR}/approved.sql" ]]; then
+    for sql_file in "${FLAG_DIR}"/c*.sql; do
+      [[ -f "${sql_file}" ]] && cat "${sql_file}" >> "${FLAG_DIR}/approved.sql"
+    done
+    echo "     ↳ c*.sql 병합으로 approved.sql 생성"
+  fi
+else
+  echo "     ✅ Wave D 완료"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# Wave E — Ship-Ready: 최종 SQL 패키징 + 매니페스트
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│  Wave E — Ship-Ready: 최종 SQL 패키징                    │"
+echo "└─────────────────────────────────────────────────────────┘"
+
+APPROVED_SQL="$(cat "${FLAG_DIR}/approved.sql" 2>/dev/null || echo '-- 승인된 SQL 없음')"
+
+WAVE_E_PROMPT=$(cat << WAVEEEOF
+# SKQ Wave E — Ship-Ready Agent
+
+당신은 최종 배포 패키징 에이전트입니다.
+Wave D에서 승인된 SQL을 정리하고, ship 명령어가 실행할 최종 파일을 생성합니다.
+
+## 승인된 SQL
+${APPROVED_SQL}
+
+## 실행 ID: ${RUN_ID}
+## 출력 디렉토리: ${OUTPUT_DIR}
+
+## 작업
+
+1. **ship.sql 생성** — 실행 준비 완료된 최종 SQL
+   - 헤더 주석 (실행 ID, 생성일, 변경 요약)
+   - BEGIN/COMMIT 트랜잭션 묶음
+   - 각 SQL 앞에 실행 전 검증 SELECT 포함
+   - 저장 위치: \`${OUTPUT_DIR}/ship.sql\`
+
+2. **ship-manifest.md 생성** — 변경 내용 요약
+   저장 위치: \`${OUTPUT_DIR}/ship-manifest.md\`
+
+### ship-manifest.md 형식
+\`\`\`markdown
+# SKQ Ship Manifest
+
+- **실행 ID**: ${RUN_ID}
+- **생성일**: $(date)
+- **범위**: ${SCOPE}
+
+## 변경 요약
+
+| # | 키워드 | 테이블 | 변경 유형 | 이유 |
+|---|--------|--------|---------|------|
+| 1 | 린넨셔츠 | search_keywords | INSERT | ZERO_UNRECOGNIZED |
+
+## 통계
+- 총 변경 건수: N
+- 영향 테이블: search_keywords, search_keyword_relations, ...
+
+## 실행 방법
+\`\`\`bash
+ship ${RUN_ID}   # 또는
+ship             # 최신 run 자동 선택
+\`\`\`
+
+## 롤백
+\`\`\`sql
+-- 각 변경사항 롤백 SQL
+\`\`\`
+\`\`\`
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/wave_E_done"
+\`\`\`
+WAVEEEOF
+)
+
+echo "${WAVE_E_PROMPT}" > "${FLAG_DIR}/wave_e_prompt.md"
+
+claude --dangerously-skip-permissions -p "${WAVE_E_PROMPT}" &
+WAVE_E_PID=$!
+
+echo "     Wave E 에이전트 시작 (PID: ${WAVE_E_PID})"
+wait "${WAVE_E_PID}" || true
+
+if [[ ! -f "${FLAG_DIR}/wave_E_done" ]]; then
+  echo "     ⚠️  Wave E 미완료"
+else
+  echo "     ✅ Wave E 완료"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# Wave F — Validate: 예상 개선도 추정 + 리포트
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│  Wave F — Validate: 예상 개선도 추정 + 리포트            │"
+echo "└─────────────────────────────────────────────────────────┘"
+
+SHIP_SQL="$(cat "${OUTPUT_DIR}/ship.sql" 2>/dev/null || echo '-- ship.sql 없음')"
+MANIFEST="$(cat "${OUTPUT_DIR}/ship-manifest.md" 2>/dev/null || echo '')"
+
+WAVE_F_PROMPT=$(cat << WAVEFEOF
+# SKQ Wave F — Validate Agent
+
+당신은 검색 품질 개선 효과 추정 에이전트입니다.
+ship.sql이 적용되었을 때 예상 개선도를 추정하고 최종 리포트를 작성합니다.
+
+## 변경 내용
+${MANIFEST}
+
+## ship.sql
+${SHIP_SQL}
+
+## 검색 파이프라인 & DB 스키마
+${DOCS_CONTEXT}
+
+## DB 접근
+${DB_CONTEXT}
+
+## 작업
+
+1. **영향 키워드별 현재 상태 조회** (DB 직접 쿼리)
+2. **예상 개선도 추정**
+   - ZERO_UNRECOGNIZED → INSERT: 해당 키워드 결과 0건 → 예상 결과 N건
+   - ETC_TYPE → UPDATE: 분류 개선으로 발골 성공 기대
+   - NO_SYNONYM → INSERT SAME: Tier1 확장으로 추가 결과 N건 기대
+   - POSSIBLE_FALLBACK → UPDATE anchor: 텍스트 검색 → 정밀 필터 전환
+
+3. **최종 리포트 생성**
+   저장 위치: \`${OUTPUT_DIR}/wave-f-validate.md\`
+
+### 리포트 형식
+\`\`\`markdown
+# SKQ 개선 효과 추정 리포트
+
+- **실행 ID**: ${RUN_ID}
+- **분석일**: $(date)
+
+## 개선 전/후 비교
+
+| 키워드 | 현재 결과수 | 예상 결과수 | 변화 | 신뢰도 |
+|--------|-----------|-----------|------|:------:|
+| 린넨셔츠 | 0 | ~150 | ▲150 | 중 |
+
+## 전체 통계
+- 개선 대상 키워드: N개
+- 예상 총 개선 키워드: N개
+- 평균 결과 증가율: N%
+
+## 적용 권장
+- 즉시 적용: N건 (신뢰도 높음)
+- 검토 후 적용: N건 (신뢰도 중)
+- 보류: N건 (추가 검토 필요)
+\`\`\`
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/wave_F_done"
+\`\`\`
+WAVEFEOF
+)
+
+echo "${WAVE_F_PROMPT}" > "${FLAG_DIR}/wave_f_prompt.md"
+
+claude --dangerously-skip-permissions -p "${WAVE_F_PROMPT}" &
+WAVE_F_PID=$!
+
+echo "     Wave F 에이전트 시작 (PID: ${WAVE_F_PID})"
+wait "${WAVE_F_PID}" || true
+
+if [[ ! -f "${FLAG_DIR}/wave_F_done" ]]; then
+  echo "     ⚠️  Wave F 미완료"
+else
+  echo "     ✅ Wave F 완료"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# 최종 완료
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ✅ SKQ 워크플로 완료!"
+echo "  실행 ID: ${RUN_ID}"
+echo ""
+echo "  📁 결과물:"
+echo "    ${OUTPUT_DIR}/ship.sql           ← 적용할 SQL"
+echo "    ${OUTPUT_DIR}/ship-manifest.md   ← 변경 요약"
+echo "    ${OUTPUT_DIR}/wave-f-validate.md ← 예상 개선 효과"
+echo ""
+echo "  🚀 적용:"
+echo "    ship                  # 최신 결과 적용"
+echo "    ship ${RUN_ID}        # 이번 결과 적용"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
