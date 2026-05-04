@@ -1,0 +1,1604 @@
+#!/usr/bin/env bash
+# sq-v3 — Search Quality 워크플로 v3 (search_keywords 수정·개선)
+# 사용법: sq-v3              → search_keywords 개선 — 유사도/관련 상품 노출 향상 (기본값)
+#         sq-v3 "범위 지정"  → 특정 수정 범위나 목적을 지정해 실행
+#
+# v2 대비 주요 변경:
+#   [C1] 목적 변경: 품질 측정(v2) → search_keywords 데이터 수정·개선(v3)
+#   [C2] keyword_fixer 에이전트 신규 추가 (Wave C) — scores.json → SQL 생성
+#   [C3] runner DB 전략: rank 상위 → ZERO_RESULT/ETC_TYPE/NO_SYNONYM/POSSIBLE_FALLBACK 우선
+#   [C4] scorer 출력 스키마 확장: fixable, fix_type, fix_priority 필드 추가
+#   [C5] reporter → Wave D (v2 Wave C 위치에서 이동), reporter-v3 사용
+#   [C6] 게이트 추가: fix_search_keywords.sql 존재 여부 확인
+#   [C7] DB 접근 2단계 전략: 현재 read-only (SQL 파일 생성) → 추후 write 자동 적용
+#   ⚠️  현재는 read-only 계정만 사용. keyword_fixer는 SQL 파일만 생성하고 실행하지 않음.
+
+set -euo pipefail
+
+FEATURE="${1:-search_keywords 개선 — 유사도/관련 상품 노출 향상}"
+
+# ── PostgreSQL 접속 정보 — ~/.config/sq/db.env 에서 로드 ────
+SQ_DB_ENV="${HOME}/.config/sq/db.env"
+if [[ -f "${SQ_DB_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  source "${SQ_DB_ENV}"
+else
+  echo "⚠️  DB 자격증명 파일이 없습니다: ${SQ_DB_ENV}"
+  echo "   sq-setup 을 먼저 실행해 환경을 설정하세요."
+  echo "   에이전트는 DB 없이 동작합니다."
+fi
+
+PGHOST="${PGHOST:-}"
+PGDATABASE="${PGDATABASE:-danble}"
+PGUSER="${PGUSER:-danble_read_only}"
+PGPASSWORD="${PGPASSWORD:-}"
+PGPORT="${PGPORT:-5432}"
+PGSSLMODE="${PGSSLMODE:-require}"
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+
+SQ_PSQL="psql -h ${PGHOST} -U ${PGUSER} -d ${PGDATABASE} -p ${PGPORT}"
+
+# ── DB 스키마 컨텍스트 ──────────────────────────────────────
+DB_SCHEMA_CONTEXT=$(cat << 'DBSCHEMAEOF'
+## PostgreSQL DB 접근 (danble read-only replica)
+
+접속 명령어 (Bash 툴에서 직접 실행 가능):
+  PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" --no-password -c "SELECT ..."
+
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있습니다.
+
+### 주요 검색 관련 테이블
+
+| 테이블 | 주요 컬럼 | 설명 |
+|--------|---------|------|
+| `search_keywords` | id, keyword, keyword_type, category_main, rank, result_product_count, auto_score, md_score, normalized_keyword | 검색 키워드 마스터 |
+| `search_keyword_relations` | source_keyword_id, target_keyword_id, relation_type, relation_score | 키워드 간 연관관계 (SAME=동의어, SIMILAR=유사어) |
+| `search_brand_keywords` | brand_id, search_keyword_id | 브랜드-키워드 매핑 |
+| `search_category_keywords` | product_type, search_scope_product_type, requires_name_search, product_midtype_ids, product_subtype_ids | 카테고리-키워드 설정 |
+| `search_color_keywords` | variant_ids, search_keyword_id | 컬러-키워드 매핑 |
+| `search_keyword_rankings` | result_product_count, result_style_count, recent_order_count, md_score, auto_score, rank | 키워드 랭킹 점수 |
+| `search_logs` | user_id, query, search_url, created_at | 사용자 검색 로그 |
+| `product_displays` | id, name, sale_status, is_sold_out, price, brand_id, product_type | 상품 전시 정보 |
+
+### 쿼리 예시
+```sql
+-- 결과 0건 키워드 (ZERO_RESULT 후보)
+SELECT id, keyword, keyword_type, category_main, rank
+FROM search_keywords WHERE result_product_count = 0 AND is_deleted = false
+ORDER BY rank ASC NULLS LAST LIMIT 20;
+
+-- ETC 타입 키워드 (FIX_KEYWORD_TYPE 후보)
+SELECT id, keyword, keyword_type, result_product_count
+FROM search_keywords WHERE keyword_type = 'ETC' AND is_deleted = false
+ORDER BY rank ASC NULLS LAST LIMIT 20;
+
+-- SAME 동의어 없는 키워드 (NO_SYNONYM 후보)
+SELECT sk.id, sk.keyword FROM search_keywords sk
+WHERE sk.is_deleted = false AND sk.result_product_count > 0
+AND NOT EXISTS(SELECT 1 FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SAME')
+ORDER BY sk.rank ASC NULLS LAST LIMIT 20;
+```
+⚠️ SELECT만 가능 (read-only 접속). INSERT/UPDATE/DELETE 불가.
+DBSCHEMAEOF
+)
+
+# ── 백엔드 검색 파이프라인 컨텍스트 (keyword_fixer SQL 생성 근거) ──
+BACKEND_SEARCH_CONTEXT=$(cat << 'BACKENDEOF'
+## 백엔드 검색 파이프라인 (수정 SQL 생성 근거)
+
+### 1. 검색 처리 흐름
+
+```
+입력 query
+  → QueryAnalyzer.normalize()         # 소문자, 공백 정리
+  → OpenSearch Analyze API            # nori tokenizer, decompound_mode=none (복합어 미분해)
+  → TokenClassifier.classify(tokens, domain=PRODUCT)
+      ├─ _classify_tokens()           # search_keywords 테이블에서 토큰 매칭
+      │    → 미매칭 → remaining_keyword (unmatched should 쿼리 대상)
+      ├─ _expand_keywords()           # SAME 동의어 확장 (search_keyword_relations WHERE relation_type='SAME')
+      └─ _classify_for_product()
+          ├─ BRAND  발골 → extracted_brands  (search_brand_keywords)
+          ├─ COLOR  발골 → extracted_colors  (search_color_keywords)
+          └─ CATEGORY 발골 → extracted_category (search_category_keywords)
+  → 발골 결과 전부 없음 → 즉시 빈 결과 반환  ← ZERO_UNRECOGNIZED 발생 지점
+  → _search_with_fallback()
+      ├─ Tier 1: 원본 + SAME 동의어만 검색 → 결과 > 0이면 반환
+      └─ Tier 2 (Tier 1 = 0건만): 원본 + SAME + SIMILAR 동의어 포함 검색
+```
+
+**파이프라인 특이사항**
+- `decompound_mode=none` → "린넨셔츠"를 "린넨"+"셔츠"로 분해하지 않음
+- 쿼리 토크나이징 코드 주석 처리 상태 → 형태소 단위 분리 미사용
+- `is_sold_out` 기본 필터 없음 → 품절 상품 상위 노출 가능
+- `min_score: 0.3` — should 쿼리 있을 때만 적용
+- CATEGORY와 BRAND 동시 발골 시 **CATEGORY 우선** (브랜드 필터 제거됨)
+
+### 2. diagnosis_codes → 수정 대상 테이블
+
+| diagnosis_code | 파이프라인 실패 지점 | 수정 테이블 | fix_type |
+|---------------|-----------------|-----------|---------|
+| ZERO_UNRECOGNIZED | _classify_tokens 매칭 실패 → 발골 전부 없음 | `search_keywords` INSERT | INSERT_KEYWORD |
+| ZERO_NO_MATCH | Tier 1 & 2 모두 0건 | `search_keyword_relations` SIMILAR INSERT | ADD_SIMILAR |
+| ETC_TYPE | keyword_type=ETC → must 필터 없이 should만 | `search_keywords` keyword_type UPDATE + 매핑 INSERT | FIX_KEYWORD_TYPE |
+| NO_SYNONYM | _expand_keywords SAME 0건 → Tier 1 원본만 | `search_keyword_relations` SAME INSERT | ADD_SYNONYM |
+| POSSIBLE_FALLBACK | extracted_brands/category 없음 → should 전체 검색 | `search_category_keywords` or `search_brand_keywords` INSERT | FIX_CATEGORY_MAPPING / FIX_BRAND_MAPPING |
+| BRAND_MAPPING_WRONG | brand.id 필터 엉뚱함 | `search_brand_keywords` brand_id UPDATE | FIX_BRAND_MAPPING |
+| CATEGORY_MAPPING_WRONG | product_type/midtype 불일치 | `search_category_keywords` UPDATE | FIX_CATEGORY_MAPPING |
+| LOW_RELEVANCE | OpenSearch 분석기 이슈 | 코드 수정 필요 (NOT_FIXABLE) | NOT_FIXABLE |
+| SOLDOUT_EXPOSED | is_sold_out 필터 없음 | 코드 수정 필요 (NOT_FIXABLE) | NOT_FIXABLE |
+
+### 3. fix_priority 기준
+
+| priority | 조건 |
+|---------|------|
+| HIGH | ZERO_RESULT + rank 상위 (즉각 개선 효과 큼) |
+| MEDIUM | ETC_TYPE, NO_SYNONYM, POSSIBLE_FALLBACK |
+| LOW | ZERO_RESULT + rank 없음, ADD_SIMILAR |
+| NONE | NOT_FIXABLE (LOW_RELEVANCE, SOLDOUT_EXPOSED) |
+BACKENDEOF
+)
+
+# ── 리포트 출력 디렉토리
+SQ_OUTPUT_DIR=""
+
+# ── 검색 API 엔드포인트 ──────────────────────────────────────
+SQ_API_BASE="https://production-api.danble.co.kr"
+SQ_SEARCH_ENDPOINT="${SQ_API_BASE}/api/v1/search/product-results"
+SQ_SEARCH_PARAMS="page=1&limit=50"
+
+# ── OpenSearch 인프라 컨텍스트 ───────────────────────────────
+OPENSEARCH_CONTEXT=$(cat << 'OSEOF'
+## OpenSearch 인프라 현황 (danble-search-production)
+
+- 엔진: OpenSearch 2.17, VPC 내부 전용
+- 인덱스: products / keywords / styles / brands / qc_products
+
+### 분석기 설정 (danble_analyzer)
+- 토크나이저: nori_tokenizer (decompound_mode: none — 복합어 미분해)
+- 커스텀 사전: S3 패키지 등록 (브랜드명·패션용어 포함 추정)
+- 필터: lowercase, remove_duplicates, nori_readingform (한자→한글)
+- NGram: min 2, max 10 (부분 문자열 매칭)
+
+### 쿼리 특성
+- Fallback: Tier 1(원본+동의어) → 결과 0건 시 Tier 2(유사어 확장)
+- Fuzzy Search: ❌ 미적용 (오타 허용 없음)
+- 기본 필터: display=true 만 적용 (is_sold_out 필터 없음)
+
+### 알려진 이슈
+- is_sold_out 기본 필터 없음 → 품절 상품 상위 노출 가능
+- decompound_mode=none → 복합어 미분해
+- 쿼리 토크나이징 코드 주석 처리 상태 → 형태소 단위 분리 미사용
+OSEOF
+)
+
+# ── 토론 함수 (Red → Blue → Judge, 최대 2라운드) ────────────
+run_debate() {
+  local TOPIC="$1"
+  local CONTEXT_FILE="$2"
+  local FOCUS="$3"
+  local ALLOW_REWORK="${4:-0}"
+  local MAX_ROUNDS=2
+  local ROUND=0
+  local VERDICT="CONTINUE"
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  🗣️  토론: ${TOPIC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  while [[ $ROUND -lt $MAX_ROUNDS ]] && [[ "$VERDICT" != "CONSENSUS" ]]; do
+    ROUND=$((ROUND + 1))
+    echo ""
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | 🔴 Red 공격"
+    echo "  🔴 Round ${ROUND}/${MAX_ROUNDS} — Red 공격 중..."
+
+    cat > "${FLAG_DIR}/red_${FOCUS}_${ROUND}.txt" << REDEOF
+당신은 red 에이전트입니다. 아래 파일의 허점, 위험요소, 누락된 엣지케이스를 공격하세요.
+해결책 제시 금지. 문제 지적만 하세요.
+
+주제: ${TOPIC}
+원본 작업: ${FEATURE}
+
+검토 대상 파일 (Read 툴로 직접 읽으세요): ${CONTEXT_FILE}
+
+공격 내용을 ${FLAG_DIR}/red_${FOCUS}_${ROUND}.md 에 저장하세요.
+REDEOF
+    claude -p "$(cat "${FLAG_DIR}/red_${FOCUS}_${ROUND}.txt")" \
+      --allowedTools "Read,Write,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/red_${FOCUS}_${ROUND}.log"
+
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | 🔵 Blue 방어"
+    echo "  🔵 Round ${ROUND}/${MAX_ROUNDS} — Blue 방어 중..."
+    cat > "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.txt" << BLUEEOF
+당신은 blue 에이전트입니다. Red의 공격을 검토하고 각 항목을 ACCEPT/MITIGATE/REJECT로 판정하세요.
+
+주제: ${TOPIC}
+원본 작업: ${FEATURE}
+
+검토 대상 파일 (Read 툴로 읽으세요): ${CONTEXT_FILE}
+Red 공격 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/red_${FOCUS}_${ROUND}.md
+
+## 수정 시 반드시 지켜야 할 규칙
+
+ACCEPT 또는 MITIGATE 항목은 실제로 파일을 수정해 반영하세요.
+
+**동일 결함 전수 수정 — 가장 중요:**
+Red가 특정 위치의 결함을 지적했더라도, 수정 전에 반드시 Grep 툴로 동일 패턴이 파일 전체에 몇 군데 더 있는지 확인하세요.
+같은 결함이 다른 함수·섹션에도 존재하면 모두 함께 수정해야 합니다.
+
+수정 완료 후 blue_${FOCUS}_${ROUND}.md 에 아래 형식으로 저장하세요:
+- 각 항목: ACCEPT/MITIGATE/REJECT 판정 + 수정 내용 요약
+- 전수 수정 항목은 "N곳 모두 수정" 명시
+
+판정 및 수정 결과를 ${FLAG_DIR}/blue_${FOCUS}_${ROUND}.md 에 저장하세요.
+BLUEEOF
+    claude -p "$(cat "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.txt")" \
+      --allowedTools "Read,Write,Edit,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/blue_${FOCUS}_${ROUND}.log"
+
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | ⚖️ Judge 판정 중"
+    echo "  ⚖️  Round ${ROUND}/${MAX_ROUNDS} — Judge 판정 중..."
+    cat > "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.txt" << JUDGEEOF
+당신은 judge 에이전트입니다. Red/Blue 토론을 심판하세요.
+
+주제: ${TOPIC}
+라운드: ${ROUND}/${MAX_ROUNDS}
+
+Red 공격 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/red_${FOCUS}_${ROUND}.md
+Blue 방어 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/blue_${FOCUS}_${ROUND}.md
+
+판정 결과를 ${FLAG_DIR}/judge_${FOCUS}_${ROUND}.md 에 저장하고,
+첫 번째 줄에 반드시 다음 형식으로 작성하세요:
+VERDICT: CONSENSUS   (Blue가 충분히 방어/개선함 — 종료)
+VERDICT: CONTINUE    (사소한 문제 — 다음 라운드에서 Blue가 수정)
+$(if [[ "$ALLOW_REWORK" == "1" ]]; then echo "VERDICT: REWORK      (근본적 재구현 필요 — Wave 에이전트를 처음부터 다시 실행해야 함)"; fi)
+JUDGEEOF
+    claude -p "$(cat "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.txt")" \
+      --allowedTools "Read,Write,Edit" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.log"
+
+    VERDICT=$(grep "^VERDICT:" "${FLAG_DIR}/judge_${FOCUS}_${ROUND}.md" 2>/dev/null | head -1 | awk '{print $2}')
+    VERDICT="${VERDICT:-CONTINUE}"
+    echo "  ⚖️  판정: ${VERDICT}"
+    tl "🗣️ Debate(${FOCUS}) R${ROUND} | ⚖️ → **${VERDICT}**"
+    [[ "$VERDICT" == "REWORK" ]] && break
+  done
+
+  echo ""
+  case "$VERDICT" in
+    CONSENSUS) echo "  ✅ CONSENSUS — 다음 단계로 진행" ;;
+    REWORK)    echo "  🔄 REWORK — Wave 에이전트 재실행 필요" ;;
+    *)         echo "  ⚠️  ${MAX_ROUNDS}라운드 종료 — 최선의 결과로 진행" ;;
+  esac
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  echo "$VERDICT" > "${FLAG_DIR}/debate_${FOCUS}_verdict.txt"
+}
+
+# ── 웨이브 대기 함수 ─────────────────────────────────────────
+wait_wave() {
+  local WAVE_FILE="$1"
+  local WAVE_LABEL="$2"
+  local WAVE_COUNT=0
+  local WAIT_COUNT=0
+  local MAX_WAIT=600
+
+  [[ ! -s "$WAVE_FILE" ]] && return
+
+  while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+    WAVE_COUNT=$((WAVE_COUNT + 1))
+  done < "$WAVE_FILE"
+
+  while [[ $WAIT_COUNT -lt $MAX_WAIT ]]; do
+    local DONE_COUNT=0
+    while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+      [[ -f "${FLAG_DIR}/${AGENT_NAME}.done" ]] && DONE_COUNT=$((DONE_COUNT + 1)) || true
+    done < "$WAVE_FILE"
+    [[ $DONE_COUNT -ge $WAVE_COUNT ]] && break
+    printf "\r  ⏳ %s 완료: %d/%d  (%ds)   " "$WAVE_LABEL" "$DONE_COUNT" "$WAVE_COUNT" "$WAIT_COUNT"
+    sleep 5
+    WAIT_COUNT=$((WAIT_COUNT + 5))
+  done
+  echo ""
+}
+
+# ── 완료된 웨이브 패널/세션 정리 ─────────────────────────────
+cleanup_wave() {
+  if [[ -n "${TMUX:-}" ]] && [[ -s "$PANE_ID_FILE" ]]; then
+    while IFS= read -r PANE_ID; do
+      tmux kill-pane -t "$PANE_ID" 2>/dev/null || true
+    done < "$PANE_ID_FILE"
+    > "$PANE_ID_FILE"
+    tmux select-pane -t "$MAIN_PANE" 2>/dev/null || true
+  fi
+  if [[ -f "${FLAG_DIR}/agent_sessions.txt" ]] && [[ -s "${FLAG_DIR}/agent_sessions.txt" ]]; then
+    while IFS= read -r SESSION; do
+      tmux kill-session -t "$SESSION" 2>/dev/null || true
+    done < "${FLAG_DIR}/agent_sessions.txt"
+    > "${FLAG_DIR}/agent_sessions.txt"
+  fi
+}
+
+# ── tmux 웨이브 실행 함수 ────────────────────────────────────
+LAST_WAVE_ANCHOR_PANE=""
+
+launch_wave_tmux() {
+  local WAVE_FILE="$1"
+  local WAVE_LABEL="$2"
+  local WAVE_COUNT=0
+
+  [[ ! -s "$WAVE_FILE" ]] && return
+
+  while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+    WAVE_COUNT=$((WAVE_COUNT + 1))
+  done < "$WAVE_FILE"
+
+  echo "  ▶ ${WAVE_LABEL} (${WAVE_COUNT}개) 시작..."
+
+  local FIRST_AGENT_PANE=""
+  local FIRST=1
+
+  while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+    local NEW_PANE
+    if [[ $FIRST -eq 1 ]]; then
+      if [[ -z "$LAST_WAVE_ANCHOR_PANE" ]]; then
+        tmux split-window -h -t "$MAIN_WIN" -c "$CWD"
+      else
+        tmux split-window -h -t "$LAST_WAVE_ANCHOR_PANE" -c "$CWD"
+      fi
+      NEW_PANE=$(tmux display-message -p '#{pane_id}')
+      FIRST_AGENT_PANE="$NEW_PANE"
+      FIRST=0
+    else
+      NEW_PANE=$(tmux split-window -v -t "$FIRST_AGENT_PANE" -c "$CWD" -P -F '#{pane_id}')
+    fi
+    echo "$NEW_PANE" >> "$PANE_ID_FILE"
+    tmux select-pane -t "$NEW_PANE" -T "${AGENT_EMOJI} ${AGENT_NAME}"
+    tmux send-keys -t "$NEW_PANE" "bash '${AGENT_SCRIPT}'" Enter
+  done < "$WAVE_FILE"
+
+  LAST_WAVE_ANCHOR_PANE="$FIRST_AGENT_PANE"
+  tmux select-layout -t "$MAIN_WIN" main-vertical
+  tmux select-pane -t "$MAIN_PANE"
+}
+
+# ─────────────────────────────────────────────────────────────
+
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+FLAG_DIR=".agent/sq-v3-${TIMESTAMP}"
+SQ_OUTPUT_DIR="$(pwd)/docs/reports/sq-v3-${TIMESTAMP}"
+mkdir -p "$FLAG_DIR"
+mkdir -p "$SQ_OUTPUT_DIR"
+
+# ── sq-v3-read-queries.sql 경로 확인 ─────────────────────────
+SQ_V3_READ_QUERIES="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/sq-v3-read-queries.sql"
+
+# ── 브랜치 생성 ─────────────────────────────────────────────
+BRANCH_SLUG=$(printf '%s' "$FEATURE" | LC_ALL=C tr -dc 'a-zA-Z0-9 ' | tr ' ' '-' | \
+              tr '[:upper:]' '[:lower:]' | sed 's/--*/-/g' | sed 's/^-\|-$//g' | cut -c1-40)
+[[ -z "$BRANCH_SLUG" ]] && BRANCH_SLUG="sq-v3"
+BRANCH_NAME="sq/${BRANCH_SLUG}-${TIMESTAMP}"
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [[ "$CURRENT_BRANCH" =~ ^(main|master|prd|develop)$ ]] || [[ "$CURRENT_BRANCH" == "HEAD" ]]; then
+  git checkout -b "$BRANCH_NAME" 2>&1 | tee -a "${FLAG_DIR}/git.log"
+  echo "  🌿 새 브랜치 생성: $BRANCH_NAME"
+else
+  BRANCH_NAME="$CURRENT_BRANCH"
+  echo "  🌿 현재 브랜치 사용: $BRANCH_NAME"
+fi
+
+# ── 중간 커밋/푸시 헬퍼 ─────────────────────────────────────
+auto_commit() {
+  local PREFIX="$1"
+  local PHASE="${2:-}"
+  local CLEAN_MSG
+  if [[ -f "${FLAG_DIR}/commit_msg.txt" ]]; then
+    CLEAN_MSG=$(head -1 "${FLAG_DIR}/commit_msg.txt" | tr -d '\r\n')
+  else
+    CLEAN_MSG="$FEATURE"
+  fi
+  local FULL_MSG="${PREFIX}: ${CLEAN_MSG}"
+  [[ -n "$PHASE" ]] && FULL_MSG="${FULL_MSG} — ${PHASE}"
+  git add -A 2>/dev/null || true
+  if git diff --cached --quiet 2>/dev/null; then
+    echo "  ⏭️  변경사항 없음 — 커밋 스킵"
+    return 0
+  fi
+  git commit -m "${FULL_MSG}
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
+  git push origin "$BRANCH_NAME" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
+  echo "  ✅ 커밋/푸시 완료"
+}
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🔧 sq-v3: \"$FEATURE\""
+echo "  🌿 브랜치: $BRANCH_NAME"
+echo "  ⚠️  DB 접근: read-only (SQL 파일만 생성, 자동 실행 안 함)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# ── TIMELINE.md 초기화 ──────────────────────────────────────
+TIMELINE_FILE="${FLAG_DIR}/TIMELINE.md"
+cat > "${TIMELINE_FILE}" << TLHDR
+# sq-v3 실행 타임라인
+
+**작업**: ${FEATURE}
+**브랜치**: ${BRANCH_NAME}
+**시작**: $(date "+%Y-%m-%d %H:%M:%S")
+**FLAG_DIR**: ${FLAG_DIR}
+**REPORT_DIR**: ${SQ_OUTPUT_DIR}
+
+| 시각 | 단계 | 내용 |
+|------|------|------|
+TLHDR
+
+tl() {
+  printf "| %s | %s |\n" "$(date +%H:%M:%S)" "$1" >> "${TIMELINE_FILE}"
+}
+
+tl "🚀 시작 | \`sq-v3 \"${FEATURE}\"\`"
+tl "🌿 브랜치 | \`${BRANCH_NAME}\`"
+
+# ── DB 연결 테스트 ────────────────────────────────────────────
+echo "🗄️  DB 연결 확인 중..."
+DB_AVAILABLE=false
+if command -v psql &> /dev/null; then
+  if PGPASSWORD="${PGPASSWORD}" PGCONNECT_TIMEOUT=10 psql -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" \
+      -p "${PGPORT}" --no-password -c "SELECT 1 AS ok" -t \
+      > "${FLAG_DIR}/db_check.log" 2>&1; then
+    echo "  ✅ DB 연결 성공 (danble read-only replica)"
+    DB_AVAILABLE=true
+    tl "🗄️ DB | ✅ 연결 성공 (read-only replica)"
+  else
+    echo "  ⚠️  DB 연결 실패 — 에이전트는 DB 없이 동작합니다"
+    tl "🗄️ DB | ⚠️ 연결 실패"
+  fi
+else
+  echo "  ⚠️  psql 미설치"
+  tl "🗄️ DB | ⚠️ psql 미설치"
+fi
+
+# ── Before 스냅샷 (search_keywords 현황) ────────────────────
+take_snapshot() {
+  local LABEL="$1"
+  local OUT_FILE="${FLAG_DIR}/snapshot_${LABEL}.md"
+
+  if [[ "$DB_AVAILABLE" != "true" ]]; then
+    echo "  ⏭️  DB 미연결 — 스냅샷 스킵"
+    return
+  fi
+
+  echo "  📸 search_keywords 스냅샷 (${LABEL})..."
+
+  PGPASSWORD="${PGPASSWORD}" psql \
+    -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" \
+    --no-password -t -A -F',' << SQLEOF > "${OUT_FILE}" 2>/dev/null || true
+SELECT '# search_keywords 스냅샷 — ${LABEL}';
+SELECT '';
+SELECT '## 전체 현황';
+SELECT '| 항목 | 값 |';
+SELECT '|------|-----|';
+SELECT '| 전체 키워드 수 | ' || COUNT(*) || ' |' FROM search_keywords WHERE is_deleted = false;
+SELECT '| 결과 0건 키워드 | ' || COUNT(*) || ' |' FROM search_keywords WHERE result_product_count = 0 AND is_deleted = false;
+SELECT '| ETC 타입 키워드 | ' || COUNT(*) || ' |' FROM search_keywords WHERE keyword_type = 'ETC' AND is_deleted = false;
+SELECT '| SAME 동의어 없는 키워드 | ' || COUNT(*) || ' |'
+FROM search_keywords sk WHERE is_deleted = false AND result_product_count > 0
+AND NOT EXISTS(SELECT 1 FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SAME');
+SELECT '| CATEGORY 매핑 없는 CATEGORY 키워드 | ' || COUNT(*) || ' |'
+FROM search_keywords sk WHERE is_deleted = false AND keyword_type = 'CATEGORY'
+AND NOT EXISTS(SELECT 1 FROM search_category_keywords WHERE search_keyword_id = sk.id);
+SQLEOF
+
+  echo "  ✅ 스냅샷 저장: ${OUT_FILE}"
+}
+
+take_snapshot "before"
+echo ""
+
+echo "📋 Phase 1: 설계 검토 및 에이전트 선택..."
+echo ""
+tl "📋 Phase 1 | Architect 시작"
+
+cat > "${FLAG_DIR}/architect_prompt.txt" << PROMPTEOF
+당신은 architect입니다. 요청: "${FEATURE}"
+
+이 작업은 danble 서비스의 search_keywords 관련 테이블을 수정해 검색 품질(유사도·관련 상품 노출)을 개선하는 것입니다.
+⚠️ 현재는 read-only DB 계정만 있습니다. keyword_fixer는 SQL 파일만 생성하고 직접 실행하지 않습니다.
+
+## 현재 search_keywords 기준값 (작업 전 스냅샷)
+Read 툴로 읽어 현재 상태를 파악하고 계획에 반영하세요: ${FLAG_DIR}/snapshot_before.md
+(파일이 없으면 DB 미연결 상태이므로 스킵)
+
+${DB_SCHEMA_CONTEXT}
+
+${BACKEND_SEARCH_CONTEXT}
+
+세 가지를 수행하세요.
+
+[1] 구현/수정 계획을 ${FLAG_DIR}/plan.md 에 저장하세요. (무엇을 왜 어떻게, 위험요소와 방어책 포함)
+
+[2] 이 요청에 필요한 에이전트를 ${FLAG_DIR}/agents.txt 에 저장하세요.
+
+[3] 이 요청을 git 커밋 메시지용 한 줄 요약으로 ${FLAG_DIR}/commit_msg.txt 에 저장하세요.
+규칙:
+- URL 제외 / 도구 지시사항 제외 / 60자 이내
+- sq-v3:/feat: 등 prefix 제외 (sq-v3가 자동으로 붙임)
+형식(파이프 구분): 에이전트이름|이 요청에서 맡을 구체적 역할
+예:
+runner|ZERO_RESULT·ETC_TYPE·NO_SYNONYM·POSSIBLE_FALLBACK 키워드 수집 및 검색 API 실행
+scorer|결과 채점 — fixable/fix_type/fix_priority 필드 포함
+keyword_fixer|scores.json 기반 fix_search_keywords.sql 생성
+reporter|수정 계획 포함 검색 품질 리포트 생성
+
+선택 가능 에이전트:
+- runner     : 키워드 수집 후 자동 검색 실행 및 배치 데이터 수집
+               ⚠️ v3 전략 — DB에서 아래 4가지 유형 집중 수집 (총 450개, 중복 제거 후):
+               - ZERO_RESULT(150개): result_product_count=0, rank 순 (수정 효과 가장 큼)
+               - ETC_TYPE(100개): keyword_type=ETC, result_product_count>0, rank 순
+               - NO_SYNONYM(100개): SAME 동의어 없음, result_product_count>0, rank 순
+               - POSSIBLE_FALLBACK(100개): CATEGORY/BRAND 타입이나 매핑 없음
+               ※ sq-v3-read-queries.sql PHASE 1 쿼리를 참고하여 실행
+               웹서칭 키워드 50개 추가 수집(실제 유저 검색어 보완용)
+- scorer     : v2 채점 체계 그대로 + fixable/fix_type/fix_priority 필드 추가
+- keyword_fixer : ⭐ v3 신규 에이전트 — Wave C에서 실행
+               scores.json 읽기 → PHASE 2 컨텍스트 조회 → fix_search_keywords.sql 생성
+               ⚠️ SQL 파일만 생성. 현재 read-only 계정이므로 절대 실행하지 말 것
+- reporter   : 검색 품질 리포트 생성 (v3: 수정 계획 §7·§8 섹션 포함)
+
+판단 기준:
+- 기본 실행 → runner + scorer + keyword_fixer + reporter (전부 포함)
+- 특정 키워드 수정만 → keyword_fixer + reporter (runner/scorer 스킵 가능)
+불필요한 에이전트는 포함하지 마세요.
+
+완료 후: touch ${FLAG_DIR}/architect.done
+PROMPTEOF
+
+claude -p "$(cat "${FLAG_DIR}/architect_prompt.txt")" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions 2>&1 | tee "${FLAG_DIR}/architect.log"
+
+echo ""
+echo "✅ Phase 1 완료"
+
+SELECTED_AGENTS=""
+[[ -f "${FLAG_DIR}/agents.txt" ]] && SELECTED_AGENTS=$(paste -sd "·" "${FLAG_DIR}/agents.txt" 2>/dev/null || cat "${FLAG_DIR}/agents.txt" | tr '\n' '·' | sed 's/·$//')
+tl "📋 Phase 1 | ✅ 완료 — 에이전트: ${SELECTED_AGENTS:-(미선택)}"
+
+if [[ -f "${FLAG_DIR}/plan.md" ]]; then
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📄 구현 계획: ${FLAG_DIR}/plan.md"
+  cat "${FLAG_DIR}/plan.md"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# ── Debate 1: 설계 계획 토론 ────────────────────────────────
+echo "🗣️  Debate 1: 설계 계획 검토 토론"
+run_debate "설계 계획 검토 — 허점/위험요소 발굴" "${FLAG_DIR}/plan.md" "plan"
+
+if [[ ! -f "${FLAG_DIR}/agents.txt" ]]; then
+  echo "⚠️  agents.txt 없음 — 기본값 사용"
+  printf 'runner|ZERO_RESULT·ETC_TYPE·NO_SYNONYM·POSSIBLE_FALLBACK 키워드 수집 및 검색 실행\nscorer|결과 채점 (fixable 필드 포함)\nkeyword_fixer|fix_search_keywords.sql 생성\nreporter|수정 계획 포함 리포트 생성\n' > "${FLAG_DIR}/agents.txt"
+fi
+
+grep -v '^\s*$' "${FLAG_DIR}/agents.txt" > "${FLAG_DIR}/agents_clean.txt" || true
+mv "${FLAG_DIR}/agents_clean.txt" "${FLAG_DIR}/agents.txt"
+
+echo ""
+echo "📋 선택된 에이전트:"
+while IFS='|' read -r aname atask; do
+  echo "   • ${aname}: ${atask}"
+done < "${FLAG_DIR}/agents.txt"
+
+echo ""
+echo "⏩ 자동 승인 → Phase 3 시작"
+echo ""
+echo "🔧 Phase 3: 에이전트 4-웨이브 실행"
+echo "   Wave A (실행): runner"
+echo "   Wave B (채점): scorer              ← Wave A 완료 후 시작"
+echo "   Wave C (수정): keyword_fixer       ← Wave B 완료 후 시작"
+echo "   Wave D (보고): reporter            ← Wave C 완료 후 시작"
+echo ""
+
+CWD=$(pwd)
+
+# ── 에이전트 스크립트 생성 + 웨이브 분류 ───────────────────
+> "${FLAG_DIR}/agents_wave_a.txt"   # 실행: runner
+> "${FLAG_DIR}/agents_wave_b.txt"   # 채점: scorer
+> "${FLAG_DIR}/agents_wave_c.txt"   # 수정: keyword_fixer  (v3 신규)
+> "${FLAG_DIR}/agents_wave_d.txt"   # 보고: reporter
+
+IDX=0
+while IFS='|' read -r AGENT_NAME AGENT_TASK; do
+  DONE_FILE="${FLAG_DIR}/${AGENT_NAME}.done"
+  AGENT_SCRIPT="${FLAG_DIR}/run_${IDX}_${AGENT_NAME}.sh"
+
+  ROLE=""
+  case "$AGENT_NAME" in
+    runner) ROLE=$(cat << SQ_ROLE_EOF
+당신은 runner 에이전트입니다. sq-v3 전략으로 키워드를 수집하고 자동 검색 실행 및 배치 데이터를 수집합니다.
+
+## ⚠️ v3 키워드 수집 전략 — v2와 다릅니다
+
+sq-v3는 "수정 효과가 높은 키워드"를 우선 수집합니다. sq-v3-read-queries.sql PHASE 1을 참고하여
+아래 4가지 유형을 DB에서 직접 쿼리로 수집하세요.
+
+### DB 키워드 수집 (총 ~450개, 유형별 분리 저장)
+
+**[R-1] ZERO_RESULT 키워드 (150개) — 저장: ${FLAG_DIR}/runner_zero_result.csv**
+```sql
+SELECT sk.id AS keyword_id, sk.keyword, sk.normalized_keyword, sk.keyword_type, sk.category_main,
+  sk.rank, sk.result_product_count,
+  EXISTS(SELECT 1 FROM search_brand_keywords    WHERE search_keyword_id = sk.id) AS has_brand_mapping,
+  EXISTS(SELECT 1 FROM search_category_keywords WHERE search_keyword_id = sk.id) AS has_category_mapping,
+  EXISTS(SELECT 1 FROM search_color_keywords    WHERE search_keyword_id = sk.id) AS has_color_mapping,
+  (SELECT COUNT(*) FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SAME') AS same_count,
+  (SELECT COUNT(*) FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SIMILAR') AS similar_count
+FROM search_keywords sk
+WHERE sk.is_deleted = false AND sk.result_product_count = 0
+ORDER BY sk.rank ASC NULLS LAST LIMIT 150;
+```
+
+**[R-2] ETC_TYPE 키워드 (100개) — 저장: ${FLAG_DIR}/runner_etc_type.csv**
+```sql
+SELECT sk.id AS keyword_id, sk.keyword, sk.normalized_keyword, sk.keyword_type, sk.category_main,
+  sk.rank, sk.result_product_count,
+  EXISTS(SELECT 1 FROM search_brand_keywords    WHERE search_keyword_id = sk.id) AS has_brand_mapping,
+  EXISTS(SELECT 1 FROM search_category_keywords WHERE search_keyword_id = sk.id) AS has_category_mapping
+FROM search_keywords sk
+WHERE sk.is_deleted = false AND sk.keyword_type = 'ETC' AND sk.result_product_count > 0
+ORDER BY sk.rank ASC NULLS LAST LIMIT 100;
+```
+
+**[R-3] NO_SYNONYM 키워드 (100개) — 저장: ${FLAG_DIR}/runner_no_synonym.csv**
+```sql
+SELECT sk.id AS keyword_id, sk.keyword, sk.normalized_keyword, sk.keyword_type, sk.category_main,
+  sk.rank, sk.result_product_count,
+  (SELECT COUNT(*) FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SIMILAR') AS similar_count
+FROM search_keywords sk
+WHERE sk.is_deleted = false AND sk.result_product_count > 0
+AND NOT EXISTS(SELECT 1 FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SAME')
+ORDER BY sk.rank ASC NULLS LAST LIMIT 100;
+```
+
+**[R-4] POSSIBLE_FALLBACK 후보 (100개) — 저장: ${FLAG_DIR}/runner_possible_fallback.csv**
+```sql
+SELECT sk.id AS keyword_id, sk.keyword, sk.normalized_keyword, sk.keyword_type, sk.category_main,
+  sk.rank, sk.result_product_count
+FROM search_keywords sk
+WHERE sk.is_deleted = false AND sk.result_product_count > 0
+AND ((sk.keyword_type = 'CATEGORY' AND NOT EXISTS(SELECT 1 FROM search_category_keywords WHERE search_keyword_id = sk.id))
+  OR (sk.keyword_type = 'BRAND'    AND NOT EXISTS(SELECT 1 FROM search_brand_keywords    WHERE search_keyword_id = sk.id)))
+ORDER BY sk.rank ASC NULLS LAST LIMIT 100;
+```
+
+psql 출력 형식: PGPASSWORD="\${PGPASSWORD}" psql -h "\${PGHOST}" -U "\${PGUSER}" -d "\${PGDATABASE}" -p "\${PGPORT}" --no-password -t -A -F',' -c "..."
+각 CSV 파일 헤더 행 없이 저장 (쉼표 구분값만).
+
+### 웹서칭 키워드 50개
+danble은 남성 전용 패션 플랫폼. 실제 유저가 검색할 법한 키워드를 WebSearch 툴로 수집:
+- 브랜드명, 아이템명, 시즌 아이템, 상황룩 등
+저장: ${FLAG_DIR}/keywords_web.txt (한 줄에 하나씩)
+
+### 합산 및 중복 제거
+4개 CSV에서 keyword 컬럼 + keywords_web.txt를 합쳐 중복 제거 후:
+최종 ${FLAG_DIR}/keywords_final.txt 생성 (최대 500개).
+
+### 검색 실행 (API 직접 호출)
+Bash 툴에서 curl로 직접 호출:
+  curl -s "${SQ_SEARCH_ENDPOINT}?${SQ_SEARCH_PARAMS}&query={URL인코딩된_키워드}"
+
+Python 배치 처리 예시 (v2와 동일):
+```python
+import urllib.request, urllib.parse, urllib.error, json, time, os
+
+def fetch_with_retry(url, kw, max_retry=3):
+    delays = [1, 2, 4]
+    for attempt in range(max_retry):
+        try:
+            res = json.loads(urllib.request.urlopen(url, timeout=10).read())
+            data = res.get('data', {})
+            items = data.get('items', [])
+            rq = data.get('result_query', {})
+            return {
+                'keyword': kw,
+                'result_count': len(items),
+                'total_count': data.get('total_count', 0),
+                'product_ids': [x.get('product_display_id') for x in items],
+                'brands': [x.get('brand', {}).get('label', '') for x in items],
+                'brands_kor': [x.get('brand', {}).get('label_kor', '') for x in items],
+                'extracted_brands': rq.get('extracted_brands', []),
+                'extracted_colors': rq.get('extracted_colors', []),
+                'extracted_categories': rq.get('extracted_categories', []),
+                'remaining_keyword': rq.get('remaining_keyword', ''),
+                'error': None
+            }, None
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep(delays[min(attempt, len(delays)-1)] * 3)
+            elif e.code >= 500:
+                time.sleep(delays[min(attempt, len(delays)-1)])
+            else:
+                return None, f'HTTP_{e.code}'
+        except Exception as e:
+            time.sleep(delays[min(attempt, len(delays)-1)])
+            return None, f'ERR:{e}'
+    return None, 'MAX_RETRY'
+```
+
+각 검색어 간 1초 딜레이 유지.
+전체 완료 후 ${FLAG_DIR}/search_results_summary.json 저장:
+{ "total": N, "success": N, "failed": N, "zero_result": N }
+
+${DB_SCHEMA_CONTEXT}
+
+${OPENSEARCH_CONTEXT}
+SQ_ROLE_EOF
+) ;;
+
+    scorer) ROLE=$(cat << SQ_ROLE_EOF
+당신은 scorer 에이전트입니다 (v2 체계 기반 + v3 fixable 필드 추가). Wave A 완료 후 수집된 데이터로 키워드별 품질 점수를 산정합니다.
+
+## ⛔ 절대 금지 사항 — 반드시 먼저 읽으세요
+
+1. **Python/Shell 스크립트 파일 생성 금지** — 모든 처리를 이 에이전트가 직접 수행합니다.
+2. **채점 로직을 코드로 작성 금지** — 관련성 판단은 LLM(당신 자신)이 직접 내려야 합니다.
+3. **psql 쿼리를 Python 스크립트 경유 금지** — Bash 툴에서 직접 실행.
+4. **scores.json 재채점 금지** — 이미 저장된 항목을 재처리하지 마세요.
+
+## v2 점수 체계 (100점)
+결과존재성(10) + 검색범위적절성(15) + 의도파악정확도(20) + 결과관련성(30) + 상위노출품질(20) + 품절노출(5) = 100점
+
+입력:
+- 검색 결과: /tmp/search-quality/{URL인코딩된_키워드}.json (runner가 저장)
+- 키워드 목록: ${FLAG_DIR}/keywords_final.txt
+- 키워드 DB 데이터: ${FLAG_DIR}/db_prefetch.json (PRE-FETCH에서 생성)
+- runner CSV들: ${FLAG_DIR}/runner_zero_result.csv, runner_etc_type.csv, runner_no_synonym.csv, runner_possible_fallback.csv
+
+---
+
+## ⚠️ PRE-STEP — 세그먼트 분류 (채점 전 선행)
+
+### PRE-1. ZERO_RESULT 판별
+
+result_count = 0 → ZERO_RESULT (모든 점수 0점, grade = "F")
+원인 하위 분류:
+- **ZERO_UNRECOGNIZED**: extracted_brands/colors/categories 모두 비어있음 AND remaining_keyword 비어있음
+- **ZERO_NO_MATCH**: extracted_* 또는 remaining_keyword 하나라도 있음 AND result_count=0
+
+### PRE-2. POSSIBLE_FALLBACK 판별
+
+조건: extracted 모두 비어있음 + total_count > 2000
+→ segment="POSSIBLE_FALLBACK", 채점 계속, 검색범위적절성 0점
+
+### PRE-STEP DB — PRE-FETCH 일괄 조회
+
+배치 루프 전, 아래 쿼리로 전체 키워드 DB 데이터 일괄 조회:
+```bash
+PGPASSWORD="\${PGPASSWORD}" psql -h "\${PGHOST}" -U "\${PGUSER}" -d "\${PGDATABASE}" -p "\${PGPORT}" \\
+  --no-password -t -A -c "
+SELECT json_agg(row_to_json(t)) FROM (
+  SELECT
+    sk.id, sk.keyword, sk.normalized_keyword, sk.keyword_type, sk.result_product_count,
+    EXISTS(SELECT 1 FROM search_category_keywords WHERE search_keyword_id = sk.id) AS has_category,
+    EXISTS(SELECT 1 FROM search_brand_keywords   WHERE search_keyword_id = sk.id) AS has_brand,
+    EXISTS(SELECT 1 FROM search_color_keywords   WHERE search_keyword_id = sk.id) AS has_color,
+    (SELECT sbk.brand_id FROM search_brand_keywords sbk WHERE sbk.search_keyword_id = sk.id LIMIT 1) AS brand_id,
+    (SELECT sck.product_type FROM search_category_keywords sck WHERE sck.search_keyword_id = sk.id LIMIT 1) AS category_product_type,
+    (SELECT COUNT(*) FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SAME' AND relation_score > 0) AS same_count,
+    (SELECT COUNT(*) FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SIMILAR' AND relation_score > 0) AS similar_count
+  FROM search_keywords sk
+  WHERE LOWER(sk.keyword) = ANY(ARRAY[...전체 키워드...])
+     OR LOWER(sk.normalized_keyword) = ANY(ARRAY[...전체 키워드...])
+) t
+"
+```
+결과를 ${FLAG_DIR}/db_prefetch.json 에 저장.
+
+---
+
+## STEP 1~6 — 100점 채점 (ZERO_RESULT는 건너뜀)
+
+v2 채점 체계와 동일:
+- STEP 1: 결과 존재성 (10점)
+- STEP 2: 검색 범위 적절성 (15점) — POSSIBLE_FALLBACK 자동 0점
+- STEP 3: 의도 파악 정확도 (20점) — 유형 A/B/C/D/E
+- STEP 4: 결과 관련성 (30점) — LLM 독립 평가
+- STEP 5: 상위 노출 품질 (20점)
+- STEP 6: 품절 상품 노출 (5점) — [D] 쿼리 실행
+
+## STEP 7 — 등급 결정
+A(85~100) / B(70~84) / C(50~69) / D(30~49) / F(0~29)
+
+## STEP 8 — diagnosis_codes
+ZERO_UNRECOGNIZED / ZERO_NO_MATCH / POSSIBLE_FALLBACK / ETC_TYPE /
+BRAND_MAPPING_WRONG / CATEGORY_MAPPING_WRONG / LOW_RELEVANCE /
+POOR_RANKING / NO_SYNONYM / SOLDOUT_EXPOSED
+
+---
+
+## ⭐ v3 신규 필드 — fixable, fix_type, fix_priority
+
+diagnosis_codes 기반으로 수정 가능 여부와 유형을 결정하세요:
+
+| diagnosis_code | fixable | fix_type | fix_priority |
+|---------------|---------|---------|-------------|
+| ZERO_UNRECOGNIZED | true | INSERT_KEYWORD | HIGH (rank 있음) / LOW (rank 없음) |
+| ZERO_NO_MATCH | true | ADD_SIMILAR | LOW |
+| ETC_TYPE | true | FIX_KEYWORD_TYPE | MEDIUM |
+| NO_SYNONYM | true | ADD_SYNONYM | MEDIUM |
+| POSSIBLE_FALLBACK | true | FIX_CATEGORY_MAPPING 또는 FIX_BRAND_MAPPING | MEDIUM |
+| BRAND_MAPPING_WRONG | true | FIX_BRAND_MAPPING | MEDIUM |
+| CATEGORY_MAPPING_WRONG | true | FIX_CATEGORY_MAPPING | MEDIUM |
+| LOW_RELEVANCE | false | NOT_FIXABLE | NONE |
+| SOLDOUT_EXPOSED | false | NOT_FIXABLE | NONE |
+| NORMAL | false | NOT_FIXABLE | NONE |
+
+복수 diagnosis_codes 시: 가장 심각한 것 기준으로 fix_type 결정.
+
+---
+
+## 출력 형식
+
+${FLAG_DIR}/scores.json (v2 스키마 + v3 신규 필드):
+
+```json
+[
+  {
+    "keyword": "나이키 후드티",
+    "source": "DB",
+    "result_count": 42,
+    "total_count": 42,
+    "score": 78,
+    "grade": "B",
+    "segment": "GENERAL",
+    "breakdown": {
+      "결과존재성": 10,
+      "검색범위적절성": 15,
+      "의도파악정확도": 18,
+      "결과관련성": 24,
+      "상위노출품질": 8,
+      "품절노출": 3
+    },
+    "relevance_ratio": 0.8,
+    "soldout_rate": 0.15,
+    "in_keyword_dict": true,
+    "keyword_type": "BRAND",
+    "has_category": false,
+    "has_brand": true,
+    "has_color": false,
+    "same_relation_count": 2,
+    "similar_relation_count": 1,
+    "query_type": "A",
+    "diagnosis_codes": ["NO_SYNONYM"],
+    "diagnosis": "동의어 없음 — Tier 1 확장 안 됨",
+    "fixable": true,
+    "fix_type": "ADD_SYNONYM",
+    "fix_priority": "MEDIUM"
+  }
+]
+```
+
+## ⚠️ 배치 처리 필수
+
+500개를 50개 단위로 나눠서 처리. 각 배치 완료 후 즉시 scores.json에 누적 저장.
+
+${DB_SCHEMA_CONTEXT}
+
+${OPENSEARCH_CONTEXT}
+SQ_ROLE_EOF
+) ;;
+
+    keyword_fixer) ROLE=$(cat << SQ_ROLE_EOF
+당신은 keyword_fixer 에이전트입니다. sq-v3의 Wave C에서 실행됩니다.
+scorer가 생성한 ${FLAG_DIR}/scores.json 을 읽어 search_keywords 관련 테이블의 수정 SQL을 생성합니다.
+
+## ⛔ 절대 금지
+- **현재는 read-only DB 계정입니다. SQL 파일만 생성하고 절대 실행하지 마세요.**
+- PGPASSWORD로 psql INSERT/UPDATE 실행 금지
+- 자동 실행 스크립트 생성 금지
+
+## 수행 절차
+
+### Step 1. scores.json 읽기
+Read 툴로 ${FLAG_DIR}/scores.json 을 읽어 fixable=true 항목을 추출합니다.
+fix_priority 순 (HIGH → MEDIUM → LOW) 으로 정렬합니다.
+
+### Step 2. 컨텍스트 조회 (read-only psql)
+
+각 fixable 키워드에 대해 sq-v3-read-queries.sql PHASE 2 쿼리를 참고하여 컨텍스트를 조회합니다.
+파일 경로: ${SQ_V3_READ_QUERIES}
+
+**[F-1] 키워드 전체 컨텍스트 (keyword_id 별로 실행)**
+- brand_mappings, category_mappings, relations_outgoing, relations_incoming 조회
+
+**[F-2] 브랜드 이름으로 brand_id 조회** (ZERO_UNRECOGNIZED이고 브랜드명일 때)
+- brands 테이블에서 LIKE 검색
+
+**[F-3] product_type 목록 조회** (카테고리 매핑 추가 시)
+- search_category_keywords에서 DISTINCT product_type 조회
+
+**[F-4] 유사 키워드 검색** (ADD_SYNONYM, ADD_SIMILAR 시 target 확인)
+- search_keywords에서 exact match
+
+**[F-5] relation_score 범위 확인**
+- 새 relation INSERT 시 적절한 score 값 결정
+
+**[F-6] 같은 category_main 키워드 탐색** (동의어 후보)
+
+### Step 3. snapshot_before_fix.csv 저장
+
+수정 대상 keyword_id 배열을 이용해 현재 상태 스냅샷:
+```bash
+PGPASSWORD="\${PGPASSWORD}" psql -h "\${PGHOST}" -U "\${PGUSER}" -d "\${PGDATABASE}" -p "\${PGPORT}" \\
+  --no-password -t -A -F',' -c "
+SELECT sk.id, sk.keyword, sk.keyword_type, sk.result_product_count, sk.rank,
+  (SELECT COUNT(*) FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SAME') AS same_count,
+  (SELECT COUNT(*) FROM search_keyword_relations WHERE source_keyword_id = sk.id AND relation_type = 'SIMILAR') AS similar_count,
+  NOW() AS snapshot_at
+FROM search_keywords sk
+WHERE sk.id = ANY(ARRAY[id1, id2, ...])
+ORDER BY sk.rank ASC NULLS LAST;
+"
+```
+저장: ${FLAG_DIR}/snapshot_before_fix.csv
+
+### Step 4. fix_search_keywords.sql 생성
+
+Write 툴로 ${FLAG_DIR}/fix_search_keywords.sql 을 생성합니다.
+
+⚠️ 파일 헤더에 반드시 명시:
+```sql
+-- ============================================================
+-- fix_search_keywords.sql
+-- 생성일: {날짜}
+-- 생성 도구: sq-v3 keyword_fixer
+-- ⚠️ 이 파일은 read-only 계정으로는 실행 불가합니다.
+--    write 권한 계정으로 검토 후 적용하세요.
+--    적용 전 반드시 snapshot_before_fix.csv 와 비교하세요.
+-- ============================================================
+
+BEGIN;
+```
+
+fix_type별 SQL 생성 규칙:
+- **INSERT_KEYWORD** (ZERO_UNRECOGNIZED):
+  ```sql
+  -- [ZERO_UNRECOGNIZED] 키워드: {keyword}  keyword_id: {id}
+  -- 이유: search_keywords에 등록되어 있으나 발골 사전 매핑 없음
+  -- ⚠️ keyword_type, category_main 은 수동 검토 후 결정 필요
+  -- INSERT INTO search_keywords (keyword, keyword_type, ...) VALUES (...);
+  ```
+  (이미 search_keywords에 있는 경우 발골 사전 매핑만 추가)
+
+- **ADD_SYNONYM** (NO_SYNONYM):
+  ```sql
+  -- [ADD_SYNONYM] {source_keyword} ↔ {target_keyword}
+  -- target_keyword_id: {id} (F-4 조회 결과)
+  INSERT INTO search_keyword_relations (source_keyword_id, target_keyword_id, relation_type, relation_score)
+  VALUES ({src_id}, {tgt_id}, 'SAME', {score});  -- score: F-5 중앙값 참고
+  ```
+
+- **FIX_KEYWORD_TYPE** (ETC_TYPE):
+  ```sql
+  -- [FIX_KEYWORD_TYPE] {keyword}: ETC → {BRAND|CATEGORY}
+  UPDATE search_keywords SET keyword_type = '{NEW_TYPE}' WHERE id = {id};
+  ```
+
+- **ADD_SIMILAR** (ZERO_NO_MATCH):
+  ```sql
+  -- [ADD_SIMILAR] {keyword}에 SIMILAR 관계 추가
+  INSERT INTO search_keyword_relations (source_keyword_id, target_keyword_id, relation_type, relation_score)
+  VALUES ({src_id}, {tgt_id}, 'SIMILAR', {score});
+  ```
+
+- **FIX_CATEGORY_MAPPING** (POSSIBLE_FALLBACK — CATEGORY 타입):
+  ```sql
+  -- [FIX_CATEGORY_MAPPING] {keyword}: search_category_keywords 추가
+  INSERT INTO search_category_keywords (search_keyword_id, product_type, search_scope_product_type, requires_name_search)
+  VALUES ({keyword_id}, '{product_type}', '{scope}', false);
+  ```
+
+- **FIX_BRAND_MAPPING** (POSSIBLE_FALLBACK — BRAND 타입 or BRAND_MAPPING_WRONG):
+  ```sql
+  -- [FIX_BRAND_MAPPING] {keyword}: brand_id={brand_id} (F-2 조회 결과)
+  INSERT INTO search_brand_keywords (search_keyword_id, brand_id) VALUES ({keyword_id}, {brand_id});
+  -- 또는 UPDATE search_brand_keywords SET brand_id = {brand_id} WHERE search_keyword_id = {keyword_id};
+  ```
+
+SQL 파일 끝:
+```sql
+COMMIT;
+```
+
+NOT_FIXABLE 항목은 SQL 생략, 주석으로만 기록:
+```sql
+-- [NOT_FIXABLE] {keyword}: {diagnosis} — 코드 수정 필요 (sq-v3 범위 외)
+```
+
+### Step 5. fix_preview.md 생성
+
+Write 툴로 ${FLAG_DIR}/fix_preview.md 를 생성합니다.
+
+```markdown
+# keyword_fixer 수정 미리보기
+
+생성일: {날짜}
+수정 대상: {N}개 키워드 | fixable: {N}개 | not_fixable: {N}개
+
+## 수정 계획 요약
+
+| fix_type | 키워드 수 | 우선순위 | 예상 효과 |
+|---------|---------|---------|---------|
+| INSERT_KEYWORD | N | HIGH | ZERO_UNRECOGNIZED → 검색 가능 |
+| ADD_SYNONYM | N | MEDIUM | 동의어 확장 → Tier 1 결과 다양화 |
+| FIX_KEYWORD_TYPE | N | MEDIUM | ETC→BRAND/CATEGORY → 정확 필터 |
+| ADD_SIMILAR | N | LOW | Tier 2 폴백 활성화 |
+| FIX_CATEGORY_MAPPING | N | MEDIUM | POSSIBLE_FALLBACK 해소 |
+| FIX_BRAND_MAPPING | N | MEDIUM | 브랜드 정확도 개선 |
+| NOT_FIXABLE | N | — | 코드 수정 필요 (sq-v3 범위 외) |
+
+## 키워드별 상세
+
+| fix_type | keyword | keyword_id | 변경 내용 | 근거 | 예상 효과 |
+|---------|---------|-----------|---------|------|---------|
+...
+
+## SQL 파일
+경로: ${FLAG_DIR}/fix_search_keywords.sql
+⚠️ 위 SQL은 read-only 계정으로는 실행 불가. write 권한 확보 후 검토 후 적용하세요.
+```
+
+${DB_SCHEMA_CONTEXT}
+
+${BACKEND_SEARCH_CONTEXT}
+
+작업 완료 후 반드시 실행: touch ${DONE_FILE}
+SQ_ROLE_EOF
+) ;;
+
+    reporter)
+      # v3: reporter-v3 외부 스크립트 사용
+      REPORTER_V3_SCRIPT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/reporter-v3"
+      ROLE=""
+      ;;
+    *) ROLE="당신은 ${AGENT_NAME} 에이전트입니다." ;;
+  esac
+
+  case "$AGENT_NAME" in
+    runner)         EMOJI="🏃" ;;
+    scorer)         EMOJI="📊" ;;
+    keyword_fixer)  EMOJI="🔧" ;;
+    reporter)       EMOJI="📝" ;;
+    *)              EMOJI="⚙️" ;;
+  esac
+
+  cat > "${FLAG_DIR}/prompt_${IDX}.txt" << AGENTPROMPT
+${ROLE}
+
+맡은 역할: ${AGENT_TASK}
+
+전체 계획 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/plan.md
+
+작업 완료 후 반드시 실행: touch ${DONE_FILE}
+AGENTPROMPT
+
+  if [[ "${AGENT_NAME}" == "reporter" ]]; then
+    REPORTER_V3_BIN="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/reporter-v3"
+    cat > "$AGENT_SCRIPT" << SCRIPTEOF
+#!/usr/bin/env bash
+cd "${CWD}"
+if [[ -f "\${HOME}/.config/sq/db.env" ]]; then source "\${HOME}/.config/sq/db.env"; fi
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+export FLAG_DIR="${FLAG_DIR}"
+export SQ_OUTPUT_DIR="${SQ_OUTPUT_DIR}"
+export FEATURE="${FEATURE}"
+echo "📝 reporter-v3 시작..."
+bash "${REPORTER_V3_BIN}"
+SCRIPTEOF
+  else
+    cat > "$AGENT_SCRIPT" << SCRIPTEOF
+#!/usr/bin/env bash
+cd "${CWD}"
+if [[ -f "\${HOME}/.config/sq/db.env" ]]; then
+  source "\${HOME}/.config/sq/db.env"
+fi
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+echo "${EMOJI} ${AGENT_NAME} 에이전트 시작..."
+claude -p "\$(cat '${FLAG_DIR}/prompt_${IDX}.txt')" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions
+SCRIPTEOF
+  fi
+  chmod +x "$AGENT_SCRIPT"
+
+  # ── 웨이브 분류 (v3: A=runner, B=scorer, C=keyword_fixer, D=reporter)
+  case "$AGENT_NAME" in
+    runner)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_a.txt" ;;
+    scorer)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_b.txt" ;;
+    keyword_fixer)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_c.txt" ;;
+    reporter)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_d.txt" ;;
+    *)
+      echo "${AGENT_NAME}|${EMOJI}|${AGENT_SCRIPT}" >> "${FLAG_DIR}/agents_wave_a.txt" ;;
+  esac
+
+  IDX=$((IDX + 1))
+done < "${FLAG_DIR}/agents.txt"
+
+PANE_ID_FILE="${FLAG_DIR}/agent_panes.txt"
+> "$PANE_ID_FILE"
+
+# ── Debate 2 포커스 결정 ─────────────────────────────────────
+DEBATE2_TOPIC="채점 결과 및 수정 SQL 검토"
+DEBATE2_FILE="${FLAG_DIR}/scores.json"
+DEBATE2_FOCUS="test"
+if [[ -f "${FLAG_DIR}/fix_preview.md" ]]; then
+  DEBATE2_FILE="${FLAG_DIR}/fix_preview.md"
+  DEBATE2_TOPIC="keyword_fixer 수정 SQL 검토"
+fi
+
+# ── Wave + Debate 2 루프 (REWORK 시 재실행) ─────────────────
+MAX_REWORK=3
+REWORK_COUNT=0
+
+if [[ -n "${TMUX:-}" ]]; then
+  MAIN_PANE=$(tmux display-message -p '#{pane_id}')
+  MAIN_WIN=$(tmux display-message -p '#{window_id}')
+  WIN="$MAIN_WIN"
+fi
+
+while true; do
+  if [[ $REWORK_COUNT -gt 0 ]]; then
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  🔄 REWORK Round ${REWORK_COUNT}/${MAX_REWORK} — Wave 재실행"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    tl "🔄 REWORK | Wave 재실행 (${REWORK_COUNT}회째)"
+    for WAVE_FILE in "${FLAG_DIR}/agents_wave_a.txt" "${FLAG_DIR}/agents_wave_b.txt" \
+                     "${FLAG_DIR}/agents_wave_c.txt" "${FLAG_DIR}/agents_wave_d.txt"; do
+      [[ -s "$WAVE_FILE" ]] || continue
+      while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+        rm -f "${FLAG_DIR}/${AGENT_NAME}.done"
+      done < "$WAVE_FILE"
+    done
+    > "$PANE_ID_FILE"
+    LAST_WAVE_ANCHOR_PANE=""
+  fi
+
+  # ── 웨이브 실행 ────────────────────────────────────────────
+  if [[ -n "${TMUX:-}" ]]; then
+    # Wave A: runner
+    launch_wave_tmux "${FLAG_DIR}/agents_wave_a.txt" "Wave A (실행)"
+    wait_wave "${FLAG_DIR}/agents_wave_a.txt" "Wave A"
+    echo "  ✅ Wave A 완료"
+    tl "⚡ Wave A | ✅ 완료"
+    auto_commit "sq-v3" "검색실행"
+
+    # Wave B: scorer
+    if [[ -s "${FLAG_DIR}/agents_wave_b.txt" ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  ✅ Wave A 완료 → Wave B (채점) 시작"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      launch_wave_tmux "${FLAG_DIR}/agents_wave_b.txt" "Wave B (채점)"
+      wait_wave "${FLAG_DIR}/agents_wave_b.txt" "Wave B"
+      echo "  ✅ Wave B 완료"
+      tl "⚡ Wave B | ✅ 완료"
+      auto_commit "sq-v3" "채점"
+    fi
+
+    # Wave C: keyword_fixer
+    if [[ -s "${FLAG_DIR}/agents_wave_c.txt" ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  ✅ Wave B 완료 → Wave C (keyword_fixer) 시작"
+      echo "  🔧 SQL 파일 생성 중 (read-only — 자동 실행 없음)"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      launch_wave_tmux "${FLAG_DIR}/agents_wave_c.txt" "Wave C (keyword_fixer)"
+      wait_wave "${FLAG_DIR}/agents_wave_c.txt" "Wave C"
+      echo "  ✅ Wave C 완료"
+      tl "⚡ Wave C | ✅ 완료 — fix_search_keywords.sql 생성"
+      auto_commit "sq-v3" "SQL생성"
+    fi
+
+    # Wave D: reporter
+    if [[ -s "${FLAG_DIR}/agents_wave_d.txt" ]]; then
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  ✅ Wave C 완료 → Wave D (reporter) 시작"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      launch_wave_tmux "${FLAG_DIR}/agents_wave_d.txt" "Wave D (보고)"
+      wait_wave "${FLAG_DIR}/agents_wave_d.txt" "Wave D"
+      cleanup_wave
+      echo "  🧹 Wave A+B+C+D 패널 정리 완료"
+      tl "⚡ Wave D | ✅ 완료"
+      auto_commit "sq-v3" "리포트"
+    else
+      cleanup_wave
+    fi
+
+  else
+    SESSION_LIST_FILE="${FLAG_DIR}/agent_sessions.txt"
+    > "$SESSION_LIST_FILE"
+
+    # non-tmux 모드: 웨이브별 순차 실행
+    for WAVE_SPEC in "a:Wave A (실행)" "b:Wave B (채점)" "c:Wave C (keyword_fixer)" "d:Wave D (보고)"; do
+      WAVE_LETTER="${WAVE_SPEC%%:*}"
+      WAVE_LABEL="${WAVE_SPEC##*:}"
+      WAVE_FILE="${FLAG_DIR}/agents_wave_${WAVE_LETTER}.txt"
+      [[ -s "$WAVE_FILE" ]] || continue
+
+      WA_AGENTS=$(awk -F'|' '{print $1}' "$WAVE_FILE" | tr '\n' '·' | sed 's/·$//')
+      tl "⚡ ${WAVE_LABEL} | 시작 — ${WA_AGENTS}"
+      echo "  ▶ ${WAVE_LABEL} 시작..."
+      while IFS='|' read -r AGENT_NAME AGENT_EMOJI AGENT_SCRIPT; do
+        SESSION="sq-v3-${AGENT_NAME}"
+        tmux kill-session -t "$SESSION" 2>/dev/null || true
+        tmux new-session -d -s "$SESSION" -c "$CWD"
+        tmux send-keys -t "$SESSION" "bash '${AGENT_SCRIPT}'" Enter
+        echo "$SESSION" >> "$SESSION_LIST_FILE"
+        echo "  tmux attach -t ${SESSION}"
+      done < "$WAVE_FILE"
+      wait_wave "$WAVE_FILE" "$WAVE_LABEL"
+      cleanup_wave
+      auto_commit "sq-v3" "${WAVE_LABEL}"
+      tl "⚡ ${WAVE_LABEL} | ✅ 완료"
+    done
+  fi
+
+  echo ""
+  echo ""
+
+  # ── Debate 2: 분석 결과 토론 (REWORK 판정 허용) ─────────────
+  echo "🗣️  Debate 2: ${DEBATE2_TOPIC}"
+  if [[ -f "${FLAG_DIR}/fix_preview.md" ]]; then
+    DEBATE2_FILE="${FLAG_DIR}/fix_preview.md"
+  elif [[ -f "${FLAG_DIR}/scores.json" ]]; then
+    DEBATE2_FILE="${FLAG_DIR}/scores.json"
+  fi
+  run_debate "${DEBATE2_TOPIC}" "${DEBATE2_FILE}" "${DEBATE2_FOCUS}" "1"
+
+  DEBATE2_VERDICT=$(cat "${FLAG_DIR}/debate_${DEBATE2_FOCUS}_verdict.txt" 2>/dev/null || echo "CONSENSUS")
+  [[ "$DEBATE2_VERDICT" != "REWORK" ]] && break
+
+  REWORK_COUNT=$((REWORK_COUNT + 1))
+  echo "  (누적 REWORK: ${REWORK_COUNT}회)"
+  if [[ $REWORK_COUNT -ge $MAX_REWORK ]]; then
+    echo "  ⚠️  최대 REWORK 횟수(${MAX_REWORK}회) 도달 — 강제 진행"
+    break
+  fi
+done
+
+
+tl "🔬 Phase 3.5 | 사이드 이펙트 영향도 분석 시작"
+echo "🔬 Phase 3.5: 사이드 이펙트 영향도 분석"
+echo ""
+
+cat > "${FLAG_DIR}/impact_prompt.txt" << IMPACTEOF
+당신은 사이드 이펙트 분석 에이전트입니다.
+sq-v3 keyword_fixer가 생성한 fix_search_keywords.sql의 잠재적 영향도를 분석하세요.
+
+원래 작업: ${FEATURE}
+전체 계획 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/plan.md
+fix_preview.md (Read 툴로 읽으세요): ${FLAG_DIR}/fix_preview.md
+fix_search_keywords.sql (Read 툴로 읽으세요): ${FLAG_DIR}/fix_search_keywords.sql
+
+## 분석 지침
+
+⚠️ SQL은 아직 적용되지 않았습니다 (read-only 단계). 적용 전 위험도를 평가합니다.
+
+### 1. SQL 변경 분류
+각 SQL 구문을 분류하세요:
+- INSERT INTO search_keywords — 새 키워드 등록
+- UPDATE search_keywords SET keyword_type — 타입 변경 (파이프라인 분기 변경)
+- INSERT INTO search_keyword_relations — 동의어/유사어 추가
+- INSERT INTO search_category_keywords — 카테고리 발골 사전 추가
+- INSERT INTO search_brand_keywords — 브랜드 발골 사전 추가
+
+### 2. 위험도 평가
+- 🔴 HIGH: keyword_type UPDATE (must 필터 분기 변경 → 현재 결과 수 변화)
+- 🟡 MEDIUM: brand/category 매핑 추가 (should→must 전환)
+- 🟢 LOW: 동의어/유사어 추가 (기존 결과에 추가만 됨)
+
+### 3. 검증 권고사항
+SQL 적용 전 수동 확인이 필요한 키워드와 확인 방법을 제시하세요.
+
+분석 결과를 ${FLAG_DIR}/impact_analysis.md 에 저장하세요.
+형식:
+# 사이드 이펙트 영향도 분석 — fix_search_keywords.sql
+
+## 요약
+- 전체 위험도: 🔴/🟡/🟢
+- 적용 권고: 권고 / 검토 후 적용 / 주의
+
+## SQL 변경 유형별 집계
+| 변경 유형 | 건수 | 위험도 |
+
+## HIGH/MEDIUM 항목 상세
+
+## 적용 전 검증 권고사항
+
+IMPACTEOF
+
+claude -p "$(cat "${FLAG_DIR}/impact_prompt.txt")" \
+  --allowedTools "Read,Write,Glob,Grep,Bash" --dangerously-skip-permissions \
+  2>&1 | tee "${FLAG_DIR}/impact_analysis.log"
+
+echo ""
+if [[ -f "${FLAG_DIR}/impact_analysis.md" ]]; then
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📋 영향도 분석 결과: ${FLAG_DIR}/impact_analysis.md"
+  cat "${FLAG_DIR}/impact_analysis.md"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+echo ""
+
+tl "🔍 Phase 4 | 산출물 검증 게이트"
+echo "🔍 Phase 4: 산출물 검증 게이트"
+echo ""
+GATE_PASS=true
+
+echo "  1/5 검색 결과 수집 확인..."
+RESULT_COUNT=$(find /tmp/search-quality/ -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+if [[ "${RESULT_COUNT}" -ge 100 ]]; then
+  echo "  ✅ 검색 결과 JSON ${RESULT_COUNT}개 확인"
+else
+  echo "  ❌ 검색 결과 JSON ${RESULT_COUNT}개 — 100개 미만"
+  GATE_PASS=false
+fi
+
+echo "  2/5 점수 파일 확인..."
+if [[ -f "${FLAG_DIR}/scores.json" ]] && [[ -s "${FLAG_DIR}/scores.json" ]]; then
+  SCORED_COUNT=$(python3 -c "import json; d=json.load(open('${FLAG_DIR}/scores.json')); print(len(d))" 2>/dev/null || echo "0")
+  # fixable 필드 확인
+  FIXABLE_COUNT=$(python3 -c "import json; d=json.load(open('${FLAG_DIR}/scores.json')); print(sum(1 for x in d if x.get('fixable')))" 2>/dev/null || echo "?")
+  echo "  ✅ scores.json — ${SCORED_COUNT}개 채점 완료 (fixable: ${FIXABLE_COUNT}개)"
+else
+  echo "  ❌ scores.json 없음 또는 빈 파일"
+  GATE_PASS=false
+fi
+
+echo "  3/5 fix_search_keywords.sql 확인..."
+if [[ -f "${FLAG_DIR}/fix_search_keywords.sql" ]] && [[ -s "${FLAG_DIR}/fix_search_keywords.sql" ]]; then
+  SQL_LINES=$(wc -l < "${FLAG_DIR}/fix_search_keywords.sql" | tr -d ' ')
+  echo "  ✅ fix_search_keywords.sql — ${SQL_LINES}줄"
+  echo "  ⚠️  이 SQL은 read-only 계정으로는 실행 불가. write 권한 확보 후 적용하세요."
+else
+  echo "  ❌ fix_search_keywords.sql 없음 또는 빈 파일"
+  GATE_PASS=false
+fi
+
+echo "  4/5 fix_preview.md 확인..."
+if [[ -f "${FLAG_DIR}/fix_preview.md" ]] && [[ -s "${FLAG_DIR}/fix_preview.md" ]]; then
+  echo "  ✅ fix_preview.md 존재"
+else
+  echo "  ⚠️  fix_preview.md 없음 (reporter에서 대체 가능)"
+fi
+
+echo "  5/5 리포트 파일 확인..."
+REPORT_FOUND=true
+for RFILE in "${SQ_OUTPUT_DIR}/search-quality-report.md" "${SQ_OUTPUT_DIR}/search-quality-detail.md" "${SQ_OUTPUT_DIR}/search-quality-detail.csv"; do
+  if [[ -f "$RFILE" ]] && [[ -s "$RFILE" ]]; then
+    echo "    ✅ $RFILE"
+  else
+    echo "    ❌ $RFILE 없음"
+    REPORT_FOUND=false
+  fi
+done
+$REPORT_FOUND || GATE_PASS=false
+
+# ── Phase 5: 산출물 보완 루프 ────────────────────────────────
+MAX_FIX_ROUNDS=2
+FIX_ROUND=0
+
+while ! $GATE_PASS && [[ $FIX_ROUND -lt $MAX_FIX_ROUNDS ]]; do
+  FIX_ROUND=$((FIX_ROUND + 1))
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  tl "🔄 Phase 5 | 보완 Round ${FIX_ROUND}/${MAX_FIX_ROUNDS}"
+  echo "🔄 Phase 5: 산출물 보완 Round ${FIX_ROUND}/${MAX_FIX_ROUNDS}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  FAIL_LIST=""
+  RESULT_COUNT=$(find /tmp/search-quality/ -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+  [[ "${RESULT_COUNT}" -lt 100 ]] && FAIL_LIST="${FAIL_LIST}
+- 검색 결과 JSON ${RESULT_COUNT}개 — runner 재실행 필요. 키워드: ${FLAG_DIR}/keywords_final.txt"
+  [[ ! -f "${FLAG_DIR}/scores.json" ]] && FAIL_LIST="${FAIL_LIST}
+- scores.json 없음 — scorer 재실행 필요"
+  [[ ! -f "${FLAG_DIR}/fix_search_keywords.sql" ]] && FAIL_LIST="${FAIL_LIST}
+- fix_search_keywords.sql 없음 — keyword_fixer 재실행 필요
+  (scores.json 경로: ${FLAG_DIR}/scores.json)"
+  [[ ! -f "${SQ_OUTPUT_DIR}/search-quality-report.md" ]] && FAIL_LIST="${FAIL_LIST}
+- search-quality-report.md 없음 — reporter 재실행 필요 (경로: ${SQ_OUTPUT_DIR}/)"
+
+  cat > "${FLAG_DIR}/fix_prompt_${FIX_ROUND}.txt" << FIXEOF
+당신은 보완 에이전트입니다.
+sq-v3 산출물이 누락되었습니다. 아래 항목을 재생성하세요.
+
+원래 작업: ${FEATURE}
+API 엔드포인트: ${SQ_SEARCH_ENDPOINT}
+
+누락된 항목:
+${FAIL_LIST}
+
+⚠️ fix_search_keywords.sql 재생성 시: read-only DB 계정만 있습니다. SQL 파일만 생성하고 실행하지 마세요.
+
+${DB_SCHEMA_CONTEXT}
+
+${BACKEND_SEARCH_CONTEXT}
+FIXEOF
+
+  claude -p "$(cat "${FLAG_DIR}/fix_prompt_${FIX_ROUND}.txt")" \
+    --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions \
+    2>&1 | tee "${FLAG_DIR}/fix_${FIX_ROUND}.log"
+  auto_commit "fix"
+
+  echo ""
+  echo "🔍 게이트 재검사 (Round ${FIX_ROUND})..."
+  GATE_PASS=true
+  RESULT_COUNT=$(find /tmp/search-quality/ -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+  [[ "${RESULT_COUNT}" -ge 100 ]] && echo "  ✅ 검색 결과 JSON ${RESULT_COUNT}개" || { echo "  ❌ JSON ${RESULT_COUNT}개 부족"; GATE_PASS=false; }
+  [[ -f "${FLAG_DIR}/scores.json" ]] && echo "  ✅ scores.json 존재" || { echo "  ❌ scores.json 없음"; GATE_PASS=false; }
+  [[ -f "${FLAG_DIR}/fix_search_keywords.sql" ]] && echo "  ✅ fix_search_keywords.sql 존재" || { echo "  ❌ fix_search_keywords.sql 없음"; GATE_PASS=false; }
+  [[ -f "${SQ_OUTPUT_DIR}/search-quality-report.md" ]] && echo "  ✅ 리포트 존재" || { echo "  ❌ 리포트 없음"; GATE_PASS=false; }
+done
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if $GATE_PASS; then
+  echo "  🎉 모든 게이트 통과!"
+  tl "🔍 Phase 4 | ✅ 모든 게이트 통과"
+else
+  echo "  ⚠️  ${MAX_FIX_ROUNDS}회 자동 수정 후에도 게이트 실패"
+  tl "🔍 Phase 4 | ❌ 게이트 실패 (${MAX_FIX_ROUNDS}회 보완 후)"
+fi
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# ── Phase 6: 릴리스 매니저 ─────────────────────────────────
+GATE_STATUS="통과"
+$GATE_PASS || GATE_STATUS="실패 (Draft PR 생성)"
+
+COMMIT_SUMMARY=$(head -1 "${FLAG_DIR}/commit_msg.txt" 2>/dev/null | tr -d '\r\n' || echo "$FEATURE")
+
+REPORT_FILES=""
+[[ -f "${FLAG_DIR}/plan.md" ]]               && REPORT_FILES="${REPORT_FILES}\n- 설계 계획: ${FLAG_DIR}/plan.md"
+[[ -f "${FLAG_DIR}/runner.log" ]]            && REPORT_FILES="${REPORT_FILES}\n- 검색 실행 결과: ${FLAG_DIR}/runner.log"
+[[ -f "${FLAG_DIR}/scorer.log" ]]            && REPORT_FILES="${REPORT_FILES}\n- 품질 점수: ${FLAG_DIR}/scorer.log"
+[[ -f "${FLAG_DIR}/fix_preview.md" ]]        && REPORT_FILES="${REPORT_FILES}\n- 수정 미리보기: ${FLAG_DIR}/fix_preview.md"
+[[ -f "${FLAG_DIR}/fix_search_keywords.sql" ]] && REPORT_FILES="${REPORT_FILES}\n- 수정 SQL: ${FLAG_DIR}/fix_search_keywords.sql"
+[[ -f "${FLAG_DIR}/reporter.log" ]]          && REPORT_FILES="${REPORT_FILES}\n- 리포트 생성: ${FLAG_DIR}/reporter.log"
+
+cat > "${FLAG_DIR}/release_manager_prompt.txt" << RMEOF
+당신은 release-manager 에이전트입니다.
+모든 분석/실행/채점/수정 산출물을 통합해 최종 커밋·푸시·PR 생성을 마무리합니다.
+
+## 작업 내용
+원래 요청: ${FEATURE}
+커밋/PR 제목용 요약: ${COMMIT_SUMMARY}
+작업 브랜치: ${BRANCH_NAME}
+CI 게이트 상태: ${GATE_STATUS}
+
+⚠️ sq-v3 특이사항:
+- fix_search_keywords.sql은 아직 DB에 적용되지 않았습니다 (read-only 단계)
+- PR 본문에 "SQL 미적용 — write 권한 확보 후 검토 후 적용 필요" 명시
+
+## 에이전트 산출물 파일 (Read 툴로 직접 읽으세요)
+$(printf "%b" "${REPORT_FILES}")
+
+## 수행 절차
+
+### Step 1~4 (v2 릴리스 매니저와 동일)
+git status → git add -A → git commit → git push → PR 생성/업데이트
+
+### Step 4-a. PR 본문 특이사항
+- 제목: sq-v3: ${COMMIT_SUMMARY}
+- PR 본문에 "SQL 미적용" 명시 및 fix_search_keywords.sql 파일 경로 표기
+- 라벨: "Search Quality" (필수)
+- 베이스 브랜치: main (prd/master 금지)
+- CI 게이트 실패 시 --draft 플래그
+
+### Step 5. 결과 보고
+${FLAG_DIR}/release_report.md 에 저장
+
+## 금지 사항
+- prd / master 를 베이스로 PR 생성 금지
+- git push --force 금지
+- .env* 파일 커밋 금지
+- 사용자에게 질문하지 마세요
+RMEOF
+
+tl "📦 Phase 6 | 릴리스 매니저 시작"
+echo "📦 Phase 6: 릴리스 매니저 실행 중..."
+echo ""
+claude -p "$(cat "${FLAG_DIR}/release_manager_prompt.txt")" \
+  --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions \
+  2>&1 | tee "${FLAG_DIR}/release_manager.log"
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [[ -f "${FLAG_DIR}/release_report.md" ]]; then
+  cat "${FLAG_DIR}/release_report.md"
+else
+  echo "  ℹ️  상세 로그: ${FLAG_DIR}/release_manager.log"
+fi
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ── SUMMARY.md 생성 ──────────────────────────────────────────
+SUMMARY_FILE="${FLAG_DIR}/SUMMARY.md"
+PR_URL=$(grep -o 'https://github.com[^ ]*pull/[0-9]*' "${FLAG_DIR}/release_manager.log" 2>/dev/null | head -1 || echo "(PR URL 미확인)")
+SCORED_COUNT_F=$(python3 -c "import json,os; d=json.load(open('${FLAG_DIR}/scores.json')) if os.path.exists('${FLAG_DIR}/scores.json') else []; print(len(d))" 2>/dev/null || echo "0")
+FIXABLE_F=$(python3 -c "import json,os; d=json.load(open('${FLAG_DIR}/scores.json')) if os.path.exists('${FLAG_DIR}/scores.json') else []; print(sum(1 for x in d if x.get('fixable')))" 2>/dev/null || echo "?")
+GATE_LABEL="✅ 통과"
+$GATE_PASS || GATE_LABEL="❌ 실패"
+SQL_EXISTS="없음"
+[[ -f "${FLAG_DIR}/fix_search_keywords.sql" ]] && SQL_EXISTS="${FLAG_DIR}/fix_search_keywords.sql"
+
+cat > "${SUMMARY_FILE}" << SUMEOF
+# sq-v3 실행 요약
+
+| 항목 | 값 |
+|------|-----|
+| 작업 | ${FEATURE} |
+| 브랜치 | \`${BRANCH_NAME}\` |
+| 시작 | $(head -4 "${TIMELINE_FILE}" | grep "시작" | awk -F'\\*\\*' '{print $2}' || date "+%Y-%m-%d %H:%M:%S") |
+| 종료 | $(date "+%Y-%m-%d %H:%M:%S") |
+| 게이트 | ${GATE_LABEL} |
+| 채점 키워드 | ${SCORED_COUNT_F}개 |
+| fixable 키워드 | ${FIXABLE_F}개 |
+| PR | ${PR_URL} |
+
+## 주요 파일
+
+| 파일 | 설명 |
+|------|------|
+| [TIMELINE.md](TIMELINE.md) | 단계별 실행 타임라인 |
+| [plan.md](plan.md) | Architect 설계 계획 |
+| [scores.json](scores.json) | 키워드별 채점 결과 (fixable 필드 포함) |
+| [fix_search_keywords.sql](fix_search_keywords.sql) | ⚠️ DB 수정 SQL (미적용 — write 권한 확보 후 적용) |
+| [fix_preview.md](fix_preview.md) | 수정 내용 미리보기 |
+| [snapshot_before.md](snapshot_before.md) | search_keywords 스냅샷 (실행 전) |
+| [snapshot_before_fix.csv](snapshot_before_fix.csv) | 수정 대상 키워드 스냅샷 |
+| [impact_analysis.md](impact_analysis.md) | SQL 영향도 분석 |
+| [git.log](git.log) | git 커밋/푸시 로그 |
+
+## ⚠️ 다음 단계 (write 권한 확보 후)
+
+1. fix_search_keywords.sql 검토 (impact_analysis.md 참고)
+2. write 계정으로 SQL 실행: \`psql -U danble_write -d danble -f fix_search_keywords.sql\`
+3. 검색 API 재호출로 개선 여부 확인
+4. snapshot_after_fix.csv 저장 및 before/after 비교
+
+리포트: \`${SQ_OUTPUT_DIR}/\`
+SUMEOF
+
+tl "✅ 완료 | PR: ${PR_URL}"
+
+echo ""
+echo "📤 릴리스 로그 최종 커밋/푸시..."
+git add -A 2>/dev/null || true
+if ! git diff --cached --quiet 2>/dev/null; then
+  git commit -m "sq-v3: 릴리스 로그 — ${COMMIT_SUMMARY}
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
+  git push origin "${BRANCH_NAME}" 2>&1 | tee -a "${FLAG_DIR}/git.log" || true
+  echo "  ✅ 릴리스 로그 푸시 완료"
+else
+  echo "  ⏭️  변경사항 없음 — 스킵"
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  📋 실행 요약: ${SUMMARY_FILE}"
+echo "  📋 타임라인: ${TIMELINE_FILE}"
+echo ""
+echo "  🔧 수정 SQL (미적용): ${FLAG_DIR}/fix_search_keywords.sql"
+echo "  📄 수정 미리보기: ${FLAG_DIR}/fix_preview.md"
+echo "  ⚠️  SQL은 read-only 계정으로 생성됨 — write 권한 확보 후 적용 필요"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sq-v2 튜토리얼 — 사용법 & 단계별 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --accent: #4f46e5;
+    --accent-bg: #eef2ff;
+    --accent-border: #c7d2fe;
+    --header-h: 96px;
+  }
+
+  body { font-family: 'Noto Sans KR', sans-serif; background: var(--bg); color: var(--text-primary); line-height: 1.7; }
+
+  /* ── 헤더 ── */
+  .site-header { position: sticky; top: 0; z-index: 100; background: #fff; box-shadow: 0 1px 0 var(--border); }
+  .top-nav { padding: 0 48px; height: 56px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #f3f4f6; }
+  .nav-left { display: flex; align-items: center; gap: 4px; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
+  .nav-logo span { color: #0891b2; }
+  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
+  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
+  .nav-link.active { background: var(--accent-bg); color: var(--accent); }
+  .nav-badge { font-size: 11px; font-weight: 600; background: var(--accent-bg); color: var(--accent); padding: 3px 10px; border-radius: 20px; }
+  .breadcrumb { padding: 9px 48px; display: flex; align-items: center; gap: 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); }
+  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
+  .breadcrumb a:hover { color: var(--accent); }
+  .bc-sep { color: #d1d5db; margin: 0 2px; }
+  .bc-current { color: var(--text-primary); font-weight: 500; }
+
+  /* ── 레이아웃 ── */
+  .layout { display: flex; min-height: calc(100vh - var(--header-h)); }
+  .sidebar { width: 240px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border); padding: 24px 0; position: sticky; top: var(--header-h); height: calc(100vh - var(--header-h)); overflow-y: auto; }
+  .sidebar-logo { padding: 0 24px 20px; border-bottom: 1px solid var(--border); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+  .logo-icon { font-size: 22px; line-height: 1; }
+  .logo-title { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .logo-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .nav-section-title { padding: 6px 24px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-top: 8px; }
+  .nav-item { display: block; padding: 8px 24px; font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; border-left: 3px solid transparent; transition: all 0.15s; }
+  .nav-item:hover { color: var(--accent); background: var(--accent-bg); border-left-color: var(--accent); }
+  .main { flex: 1; padding: 28px 36px 56px; max-width: 860px; }
+
+  /* ── 페이지 헤더 ── */
+  .page-header { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid var(--border); }
+  .page-header h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }
+  .page-header .subtitle { margin-top: 8px; font-size: 16px; color: var(--text-secondary); }
+  .page-header .meta { margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .meta-badge { font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 20px; background: var(--accent-bg); color: var(--accent); }
+
+  /* ── 섹션 ── */
+  .section { margin-bottom: 40px; }
+  .section-header { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+  .section-num { width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: white; font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .section-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+  h3 { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 20px 0 10px; }
+  h3:first-child { margin-top: 0; }
+  p { font-size: 14px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 10px; }
+
+  /* ── 코드 ── */
+  .code-block { background: #1e2030; border-radius: 10px; overflow: hidden; margin: 12px 0; }
+  .code-header { background: #2a2d3e; padding: 8px 16px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #a5b4fc; font-weight: 500; }
+  .code-body { padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #a9b1d6; line-height: 1.7; white-space: pre-wrap; overflow-x: auto; }
+  .code-body .cm { color: #565f89; }
+  .code-body .ck { color: #a5b4fc; }
+  .code-body .cv { color: #7aa2f7; }
+  .code-body .cs { color: #9ece6a; }
+  .code-body .cn { color: #ff9e64; }
+  .code-body .kw { color: #ff7b72; }
+  .code-body .val { color: #e3b341; }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: var(--accent-bg); color: var(--accent); padding: 2px 6px; border-radius: 4px; }
+
+  /* ── 알림 ── */
+  .notice { border-radius: 10px; padding: 14px 18px; font-size: 13px; margin: 14px 0; display: flex; gap: 10px; align-items: flex-start; }
+  .notice-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .notice-text { color: var(--text-secondary); line-height: 1.6; }
+  .notice-title { font-weight: 700; margin-bottom: 4px; }
+  .notice.tip    { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .notice.warn   { background: #fffbeb; border: 1px solid #fde68a; }
+  .notice.info   { background: var(--accent-bg); border: 1px solid var(--accent-border); }
+  .notice.danger { background: #fef2f2; border: 1px solid #fecaca; }
+
+  /* ── 테이블 ── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+  th { text-align: left; padding: 10px 14px; background: #f9fafb; border: 1px solid var(--border); font-weight: 600; color: var(--text-secondary); font-size: 12px; }
+  td { padding: 10px 14px; border: 1px solid var(--border); color: var(--text-secondary); vertical-align: top; }
+  tr:hover td { background: #fafafa; }
+
+  /* ── 스텝 리스트 ── */
+  .step-list { list-style: none; display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+  .step-list li { display: flex; align-items: flex-start; gap: 12px; font-size: 14px; color: var(--text-secondary); padding: 12px 16px; background: #f9fafb; border: 1px solid var(--border); border-radius: 8px; line-height: 1.5; }
+  .step-list li .li-num { width: 22px; height: 22px; background: var(--accent); color: white; border-radius: 50%; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Wave 카드 ── */
+  .wave-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 16px 0; }
+  .wave-card-header { padding: 12px 18px; display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 700; color: var(--text-primary); }
+  .wave-label { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px; }
+  .wl-a { background: #eff6ff; color: #2563eb; }
+  .wl-b { background: #f0fdf4; color: #059669; }
+  .wl-c { background: #fffbeb; color: #d97706; }
+  .wave-a .wave-card-header { background: #eff6ff; border-bottom: 1px solid #dbeafe; }
+  .wave-b .wave-card-header { background: #f0fdf4; border-bottom: 1px solid #d1fae5; }
+  .wave-c .wave-card-header { background: #fffbeb; border-bottom: 1px solid #fde68a; }
+  .wave-card-body { padding: 16px 18px; background: var(--card); }
+
+  /* ── tmux 미리보기 ── */
+  .tmux-box { background: #1e2030; border-radius: 10px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #a9b1d6; margin: 12px 0; line-height: 1.7; white-space: pre; }
+
+  /* ── 플로우 다이어그램 ── */
+  .flow-diagram { background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 20px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #374151; line-height: 1.9; margin: 12px 0; white-space: pre-wrap; }
+  .flow-a { color: #2563eb; font-weight: 700; }
+  .flow-b { color: #059669; font-weight: 700; }
+  .flow-c { color: #d97706; font-weight: 700; }
+  .flow-desc { color: #6b7280; }
+
+  /* ── 배지 ── */
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+  .badge-blue   { background: #eff6ff; color: #2563eb; }
+  .badge-green  { background: #f0fdf4; color: #16a34a; }
+  .badge-indigo { background: var(--accent-bg); color: var(--accent); }
+  .badge-amber  { background: #fffbeb; color: #d97706; }
+  .badge-red    { background: #fef2f2; color: #dc2626; }
+
+  /* ── 체크리스트 ── */
+  .check-list { list-style: none; display: flex; flex-direction: column; gap: 0; margin: 12px 0; }
+  .check-list li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); }
+  .check-list li:last-child { border-bottom: none; }
+  .check-done  { color: #16a34a; font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+
+  /* ── 구분선 / 푸터 ── */
+  .divider { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .site-footer { text-align: center; padding: 28px; font-size: 13px; color: var(--text-muted); border-top: 1px solid var(--border); background: #fff; }
+  .site-footer a { color: var(--accent); text-decoration: none; }
+
+  @media (max-width: 768px) {
+    .top-nav, .breadcrumb { padding-left: 20px; padding-right: 20px; }
+    .sidebar { display: none; }
+    .main { padding: 24px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="top-nav">
+    <div class="nav-left">
+      <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
+      <div class="nav-divider"></div>
+      <a href="sq-tutorial.html" class="nav-link">sq</a>
+      <a href="sq-v2-tutorial.html" class="nav-link active">sq-v2</a>
+      <a href="sq-v3-tutorial.html" class="nav-link">sq-v3</a>
+    </div>
+    <span class="nav-badge">Search Quality v2</span>
+  </nav>
+  <div class="breadcrumb">
+    <a href="../index.html">~/tmux</a>
+    <span class="bc-sep">/</span>
+    <a href="sq-v2-overview.html">sq-v2</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">튜토리얼</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">📊</div>
+      <div>
+        <div class="logo-title">sq-v2</div>
+        <div class="logo-sub">튜토리얼</div>
+      </div>
+    </div>
+    <div class="nav-section-title">준비</div>
+    <a href="#s1" class="nav-item"><span style="color:var(--text-muted);font-size:11px;margin-right:6px;">1</span>사전 준비</a>
+    <a href="#s2" class="nav-item"><span style="color:var(--text-muted);font-size:11px;margin-right:6px;">2</span>기본 실행</a>
+    <div class="nav-section-title">흐름</div>
+    <a href="#s3" class="nav-item"><span style="color:var(--text-muted);font-size:11px;margin-right:6px;">3</span>실행 흐름 이해</a>
+    <a href="#s4" class="nav-item"><span style="color:var(--text-muted);font-size:11px;margin-right:6px;">4</span>산출물 확인</a>
+    <div class="nav-section-title">해석</div>
+    <a href="#s5" class="nav-item"><span style="color:var(--text-muted);font-size:11px;margin-right:6px;">5</span>점수 해석 방법</a>
+    <a href="#s6" class="nav-item"><span style="color:var(--text-muted);font-size:11px;margin-right:6px;">6</span>자주 묻는 질문</a>
+    <div class="nav-section-title">심화</div>
+    <a href="#s7" class="nav-item"><span style="color:var(--text-muted);font-size:11px;margin-right:6px;">7</span>고급 사용법</a>
+  </nav>
+
+  <main class="main">
+
+    <div class="page-header">
+      <h1>📊 sq-v2 튜토리얼</h1>
+      <p class="subtitle">사전 준비부터 결과 해석까지 — sq-v2로 검색 품질을 처음 측정하는 분을 위한 단계별 가이드</p>
+      <div class="meta">
+        <span class="meta-badge">품질 측정</span>
+        <span class="meta-badge">3-Wave</span>
+        <span class="meta-badge">diagnosis_codes</span>
+        <span class="meta-badge">500 키워드</span>
+      </div>
+    </div>
+
+    <!-- 전체 흐름 요약 -->
+    <div class="section">
+      <div class="flow-diagram"><span class="flow-a">Wave A</span>  runner  <span class="flow-desc">← 키워드 500개 수집 (웹서칭 250 + DB rank 상위 250) + 검색 API 배치 호출</span>
+<span style="color:#9ca3af">↓</span>
+<span class="flow-b">Wave B</span>  scorer  <span class="flow-desc">← v2 채점 체계로 결과 채점 → scores.json (diagnosis_codes / query_type 포함)</span>
+<span style="color:#9ca3af">↓</span>
+<span class="flow-c">Wave C</span>  reporter  <span class="flow-desc">← 집계 → report.md / detail.md / detail.csv 생성</span>
+<span style="color:#9ca3af">↓</span>
+<span style="color:#4f46e5;font-weight:700;">📋 결과 해석</span>  <span class="flow-desc">diagnosis_codes로 개선 방향 파악 → sq-v3로 수정 실행</span></div>
+    </div>
+
+    <!-- 1. 사전 준비 -->
+    <div class="section" id="s1">
+      <div class="section-header">
+        <div class="section-num">1</div>
+        <div class="section-title">사전 준비</div>
+      </div>
+
+      <h3>sq-setup 실행 (최초 1회)</h3>
+      <p>DB 자격증명과 psql PATH 환경을 설정합니다. 이미 sq를 사용 중이면 건너뛰세요.</p>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># DB 자격증명 파일 위치 확인</span>
+<span class="cv">ls</span> ~/.config/sq/db.env
+
+<span class="cm"># 없으면 sq-setup 실행 (최초 1회)</span>
+<span class="cv">bash</span> ~/development/tmux/sq/sq-setup</div>
+      </div>
+
+      <h3>필수 파일 확인</h3>
+      <div class="code-block">
+        <div class="code-header">~/development/tmux/sq/</div>
+        <div class="code-body"><span class="cv">ls</span> ~/development/tmux/sq/
+
+sq-v2                      <span class="cm"># 메인 실행 파일</span>
+reporter-v2                <span class="cm"># reporter 스크립트</span>
+sq-versions.md             <span class="cm"># sq / sq-v2 / sq-v3 비교 문서</span>
+sq-v1-vs-v2.md             <span class="cm"># v1→v2 채점 변경 상세 문서</span>
+sq-opensearch-logic.md     <span class="cm"># OpenSearch 파이프라인 분석</span>
+
+<span class="cm"># 실행 권한 확인</span>
+<span class="cv">which</span> sq-v2</div>
+      </div>
+
+      <h3>sq vs sq-v2 선택 기준</h3>
+      <table>
+        <thead><tr><th>목적</th><th>사용 도구</th></tr></thead>
+        <tbody>
+          <tr><td>OpenSearch DSL / API 코드를 수정하고 싶다</td><td><code>sq</code></td></tr>
+          <tr><td>현재 검색 품질이 얼마나 좋은지 측정하고 싶다</td><td><code>sq-v2</code> ← 여기</td></tr>
+          <tr><td>search_keywords 데이터를 자동으로 수정하고 싶다</td><td><code>sq-v3</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 2. 기본 실행 -->
+    <div class="section" id="s2">
+      <div class="section-header">
+        <div class="section-num">2</div>
+        <div class="section-title">기본 실행</div>
+      </div>
+
+      <h3>기본값으로 실행</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># 1. 프로젝트로 이동</span>
+<span class="cv">cd</span> ~/development/danble/danble-backend
+
+<span class="cm"># 2. tmux 세션 시작 (권장)</span>
+<span class="cv">tmux</span> new-session -s sq-v2-work
+
+<span class="cm"># 3. 기본값 실행 — "40~50대 남성 패션 키워드 500개 품질 평가"</span>
+<span class="cv">sq-v2</span></div>
+      </div>
+
+      <h3>목적 지정 실행</h3>
+      <div class="code-block">
+        <div class="code-header">terminal — 예시</div>
+        <div class="code-body"><span class="cm"># 특정 카테고리 품질 진단</span>
+<span class="cv">sq-v2</span> <span class="cs">"아우터 카테고리 키워드 품질 진단"</span>
+
+<span class="cm"># ZERO_RESULT 비율 집중 측정</span>
+<span class="cv">sq-v2</span> <span class="cs">"검색 결과 없는 키워드 비율 측정 및 원인 진단"</span>
+
+<span class="cm"># 브랜드 관련성 점수 집중 분석</span>
+<span class="cv">sq-v2</span> <span class="cs">"브랜드 키워드 관련성 품질 측정"</span></div>
+      </div>
+
+      <h3>reporter 독립 실행 (리포트만 재생성)</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="ck">FLAG_DIR</span>=.agent/sq2-20260504-103942 \
+<span class="ck">SQ_OUTPUT_DIR</span>=docs/reports/sq2-20260504-103942 \
+<span class="cv">reporter-v2</span></div>
+      </div>
+
+      <h3>실행 중 터미널 출력 예시</h3>
+      <div class="tmux-box">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📊 sq-v2: "아우터 카테고리 키워드 품질 진단"
+  🌿 브랜치: sq-v2/outer-quality-20260504-103942
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏃 Wave A: runner 실행 중...
+  ⏳ runner 완료 (6m 48s) → results/ 500개 JSON
+  ✅ Wave A 완료 · 커밋/푸시
+
+📊 Wave B: scorer 실행 중...
+  ⏳ scorer 완료 (18m 02s)
+     → scores.json (GENERAL: 391 / POSSIBLE_FALLBACK: 67 / ZERO_RESULT: 42)
+  ✅ Wave B 완료 · 커밋/푸시
+
+📝 Wave C: reporter 실행 중...
+  ✅ reporter 완료 · 리포트 3종 생성
+  ✅ Wave C 완료 · 커밋/푸시
+
+📬 PR 생성: https://github.com/.../pull/38</div>
+    </div>
+
+    <!-- 3. 실행 흐름 -->
+    <div class="section" id="s3">
+      <div class="section-header">
+        <div class="section-num">3</div>
+        <div class="section-title">실행 흐름 이해</div>
+      </div>
+
+      <p>sq-v2는 3개의 Wave를 순차적으로 실행합니다. 각 Wave는 <code>.done</code> 파일로 완료를 표시합니다.</p>
+
+      <!-- Wave A -->
+      <div class="wave-card wave-a">
+        <div class="wave-card-header">
+          <span class="wave-label wl-a">Wave A</span>
+          🏃 runner — 키워드 수집 &amp; API 호출 <span style="font-size:12px;color:#6b7280;font-weight:400;">(약 5~10분)</span>
+        </div>
+        <div class="wave-card-body">
+          <p>웹서칭으로 트렌드 키워드 250개, DB에서 rank 상위 키워드 250개를 수집하고 검색 API를 배치 호출합니다.</p>
+          <div class="code-block">
+            <div class="code-header">키워드 수집 전략</div>
+            <div class="code-body"><span class="cm"># 웹서칭 250개 — 최신 트렌드/시즌 키워드</span>
+<span class="cm"># DB 250개     — rank 상위 (서비스 대표 키워드)</span>
+<span class="cm">#</span>
+<span class="cm"># → 검색 API 배치 호출 (최대 500건)</span>
+<span class="cm"># → results/{keyword}.json 저장</span></div>
+          </div>
+          <div class="notice info">
+            <div class="notice-icon">💡</div>
+            <div class="notice-text">v1 대비: SQ_SEARCH_PARAMS에서 불필요한 <code>step=0&search_source=POPULAR_KEYWORD</code> 파라미터 제거. API 스키마에 존재하지 않는 파라미터였습니다.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Wave B -->
+      <div class="wave-card wave-b">
+        <div class="wave-card-header">
+          <span class="wave-label wl-b">Wave B</span>
+          📈 scorer ★ v2 개편 — 채점 <span style="font-size:12px;color:#6b7280;font-weight:400;">(약 15~25분)</span>
+        </div>
+        <div class="wave-card-body">
+          <p><code>results/*.json</code>을 v2 채점 체계로 채점합니다. 6개 항목 100점 만점, <code>diagnosis_codes</code> 배열, <code>query_type</code> 유형 분류 포함.</p>
+          <div class="code-block">
+            <div class="code-header">scores.json — 항목별 설명</div>
+            <div class="code-body">{
+  <span class="cn">"keyword"</span>: <span class="cs">"린넨셔츠"</span>,
+  <span class="cn">"score"</span>: <span class="val">42</span>,
+  <span class="cn">"grade"</span>: <span class="cs">"D"</span>,
+  <span class="cn">"segment"</span>: <span class="cs">"ZERO_RESULT"</span>,
+  <span class="cn">"query_type"</span>: <span class="cs">"E"</span>,          <span class="cm">// A/B/C/D/E</span>
+  <span class="cn">"keyword_type"</span>: <span class="cs">"ETC"</span>,
+  <span class="cn">"diagnosis_codes"</span>: [<span class="cs">"ZERO_UNRECOGNIZED"</span>, <span class="cs">"ETC_TYPE"</span>],
+  <span class="cn">"diagnosis"</span>: <span class="cs">"키워드 사전 미등록..."</span>,
+  <span class="cn">"breakdown"</span>: {
+    <span class="cn">"결과존재성"</span>: <span class="val">0</span>,
+    <span class="cn">"검색범위적절성"</span>: <span class="val">0</span>,
+    <span class="cn">"의도파악정확도"</span>: <span class="val">0</span>,
+    <span class="cn">"결과관련성"</span>: <span class="val">0</span>,
+    <span class="cn">"상위노출품질"</span>: <span class="val">0</span>,
+    <span class="cn">"품절노출"</span>: <span class="val">5</span>
+  }
+}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Wave C -->
+      <div class="wave-card wave-c">
+        <div class="wave-card-header">
+          <span class="wave-label wl-c">Wave C</span>
+          📝 reporter ★ v2 개편 — 리포트 생성 <span style="font-size:12px;color:#6b7280;font-weight:400;">(약 5~10분)</span>
+        </div>
+        <div class="wave-card-body">
+          <p><code>scores.json</code>을 집계해 리포트 3종을 생성합니다. 백엔드 알고리즘 컨텍스트와 diagnosis_codes → 수정 대상 테이블 매핑이 추가되었습니다.</p>
+          <div class="code-block">
+            <div class="code-header">생성 파일</div>
+            <div class="code-body">docs/reports/sq2-{TIMESTAMP}/
+├── search-quality-report.md   <span class="cm"># 요약 리포트 (백엔드 컨텍스트 포함)</span>
+├── search-quality-detail.md   <span class="cm"># 키워드별 상세 (diagnosis_codes 포함)</span>
+└── search-quality-detail.csv  <span class="cm"># 분석용 CSV</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 산출물 확인 -->
+    <div class="section" id="s4">
+      <div class="section-header">
+        <div class="section-num">4</div>
+        <div class="section-title">산출물 확인</div>
+      </div>
+
+      <h3>전체 파일 구조</h3>
+      <div class="code-block">
+        <div class="code-header">실행 후 생성되는 파일</div>
+        <div class="code-body">.agent/sq2-{TIMESTAMP}/
+├── scores.json             <span class="cm"># 전체 채점 결과 (v2 체계)</span>
+├── results/                <span class="cm"># 검색 API 응답 JSON</span>
+└── *.done                  <span class="cm"># 각 Wave 완료 플래그</span>
+
+docs/reports/sq2-{TIMESTAMP}/
+├── search-quality-report.md
+├── search-quality-detail.md
+└── search-quality-detail.csv</div>
+      </div>
+
+      <h3>report.md 구조</h3>
+      <div class="code-block">
+        <div class="code-header">search-quality-report.md 섹션 구성</div>
+        <div class="code-body">§1  실행 개요 (일시, 브랜치, 목적)
+§2  전체 품질 점수 요약 (평균 점수, 등급 분포)
+§3  ZERO_RESULT 분석 (UNRECOGNIZED vs NO_MATCH)
+§4  ETC_TYPE 키워드 목록
+§5  POSSIBLE_FALLBACK 목록
+§6  우선 개선 대상 (F등급, D등급 상위)
+§7  백엔드 알고리즘 컨텍스트    ← v2 신규
+§8  diagnosis_codes → 수정 대상 매핑  ← v2 신규</div>
+      </div>
+
+      <h3>scores.json 직접 분석</h3>
+      <div class="code-block">
+        <div class="code-header">terminal — jq 활용</div>
+        <div class="code-body"><span class="ck">FLAG_DIR</span>=.agent/sq2-{TIMESTAMP}
+
+<span class="cm"># 등급별 분포</span>
+<span class="cv">jq</span> <span class="cs">'group_by(.grade) | map({grade: .[0].grade, count: length})'</span> <span class="cs">"${FLAG_DIR}/scores.json"</span>
+
+<span class="cm"># diagnosis_codes별 키워드 목록</span>
+<span class="cv">jq</span> <span class="cs">'[.[] | select(.diagnosis_codes | contains(["ZERO_UNRECOGNIZED"])) | .keyword]'</span> \
+  <span class="cs">"${FLAG_DIR}/scores.json"</span>
+
+<span class="cm"># F등급 키워드만</span>
+<span class="cv">jq</span> <span class="cs">'[.[] | select(.grade == "F") | {keyword, score, diagnosis_codes}]'</span> \
+  <span class="cs">"${FLAG_DIR}/scores.json"</span>
+
+<span class="cm"># POSSIBLE_FALLBACK 건수</span>
+<span class="cv">jq</span> <span class="cs">'[.[] | select(.segment == "POSSIBLE_FALLBACK")] | length'</span> \
+  <span class="cs">"${FLAG_DIR}/scores.json"</span></div>
+      </div>
+    </div>
+
+    <!-- 5. 점수 해석 방법 -->
+    <div class="section" id="s5">
+      <div class="section-header">
+        <div class="section-num">5</div>
+        <div class="section-title">점수 해석 방법</div>
+      </div>
+
+      <h3>diagnosis_codes → 개선 방향 매핑</h3>
+      <table>
+        <thead><tr><th>diagnosis_code</th><th>의미</th><th>개선 방향</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>ZERO_UNRECOGNIZED</code></td>
+            <td>키워드가 search_keywords 사전에 미등록</td>
+            <td><span class="badge badge-indigo">sq-v3: INSERT_KEYWORD</span></td>
+          </tr>
+          <tr>
+            <td><code>ZERO_NO_MATCH</code></td>
+            <td>발골 성공했으나 결과 0건 — 매핑 문제</td>
+            <td><span class="badge badge-indigo">sq-v3: ADD_SYNONYM / FIX 계열</span></td>
+          </tr>
+          <tr>
+            <td><code>ETC_TYPE</code></td>
+            <td>keyword_type = ETC — must 필터 미적용</td>
+            <td><span class="badge badge-indigo">sq-v3: FIX_KEYWORD_TYPE</span></td>
+          </tr>
+          <tr>
+            <td><code>NO_SYNONYM</code></td>
+            <td>SAME 관계 0건 — Tier 1 결과 단조로움</td>
+            <td><span class="badge badge-indigo">sq-v3: ADD_SYNONYM</span></td>
+          </tr>
+          <tr>
+            <td><code>POSSIBLE_FALLBACK</code></td>
+            <td>Tier 2 fallback 의심 (extracted 없음)</td>
+            <td>조사 후 INSERT_KEYWORD 또는 방치</td>
+          </tr>
+          <tr>
+            <td><code>BRAND_MAPPING_WRONG</code></td>
+            <td>브랜드 발골 성공 but 상품 브랜드 불일치</td>
+            <td><span class="badge badge-indigo">sq-v3: FIX_BRAND_MAPPING</span></td>
+          </tr>
+          <tr>
+            <td><code>LOW_SIMILAR</code></td>
+            <td>SIMILAR 관계 0건 — Tier 2 다양성 부족</td>
+            <td><span class="badge badge-indigo">sq-v3: ADD_SIMILAR</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>평균 점수 해석 시 주의</h3>
+      <div class="notice info">
+        <div class="notice-icon">ℹ️</div>
+        <div class="notice-text">
+          <div class="notice-title">ZERO_RESULT는 평균에서 제외됩니다</div>
+          평균 점수는 <strong>GENERAL + POSSIBLE_FALLBACK</strong> 기준입니다. ZERO_RESULT 비율이 높을수록 실제 품질은 평균보다 나쁠 수 있습니다. report.md §3에서 ZERO_RESULT 비율을 반드시 확인하세요.
+        </div>
+      </div>
+
+      <h3>v1 리포트와 직접 비교 불가</h3>
+      <div class="notice warn">
+        <div class="notice-icon">⚠️</div>
+        <div class="notice-text">
+          <div class="notice-title">점수 체계가 다릅니다</div>
+          v1과 v2는 채점 항목과 가중치가 다르므로 scores.json을 직접 비교할 수 없습니다. sq-v2 최초 실행 후 이 시점을 baseline으로 확립하세요.
+        </div>
+      </div>
+
+      <h3>건강한 점수 분포 예시</h3>
+      <table>
+        <thead><tr><th>지표</th><th>양호 수준</th><th>우선 점검 필요</th></tr></thead>
+        <tbody>
+          <tr><td>전체 평균 점수</td><td>70점 이상</td><td>60점 미만</td></tr>
+          <tr><td>ZERO_RESULT 비율</td><td>10% 미만</td><td>20% 이상</td></tr>
+          <tr><td>ETC_TYPE 비율</td><td>5% 미만</td><td>15% 이상</td></tr>
+          <tr><td>POSSIBLE_FALLBACK 비율</td><td>15% 미만</td><td>30% 이상</td></tr>
+          <tr><td>F등급 비율</td><td>5% 미만</td><td>15% 이상</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <hr class="divider">
+
+    <!-- 6. FAQ -->
+    <div class="section" id="s6">
+      <div class="section-header">
+        <div class="section-num" style="background:#6b7280;">?</div>
+        <div class="section-title">자주 묻는 질문</div>
+      </div>
+
+      <h3>특정 Wave가 실패했을 때 해당 Wave부터 재실행할 수 있나요?</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="ck">FLAG_DIR</span>=.agent/sq2-{TIMESTAMP}
+
+<span class="cm"># scorer(Wave B)부터 재실행</span>
+<span class="cv">rm</span> <span class="cs">"${FLAG_DIR}/scorer.done"</span>
+
+<span class="cm"># reporter(Wave C)만 재실행</span>
+<span class="cv">rm</span> <span class="cs">"${FLAG_DIR}/reporter.done"</span>
+
+<span class="cm"># sq-v2 재실행</span>
+<span class="cv">sq-v2</span></div>
+      </div>
+
+      <h3>sq와 sq-v2를 동시에 실행해도 되나요?</h3>
+      <p>네. sq는 코드 수정(opensearch/api 에이전트), sq-v2는 품질 측정(runner+scorer+reporter)이라 역할이 다릅니다. 단, 같은 브랜치에서 동시에 실행하면 커밋 충돌이 날 수 있으므로 별도 브랜치를 권장합니다.</p>
+
+      <h3>POSSIBLE_FALLBACK이 너무 많아요. 정상인가요?</h3>
+      <p>POSSIBLE_FALLBACK은 v1의 FALLBACK과 다르게 F등급 강제가 없습니다. 채점은 계속됩니다. 다만 비율이 30% 이상이면 search_keywords 사전이 충분하지 않다는 신호입니다. sq-v3로 INSERT_KEYWORD를 실행하면 비율을 낮출 수 있습니다.</p>
+
+      <h3>reporter만 다시 실행하고 싶으면?</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="ck">FLAG_DIR</span>=.agent/sq2-{TIMESTAMP} \
+<span class="ck">SQ_OUTPUT_DIR</span>=docs/reports/sq2-{TIMESTAMP} \
+<span class="cv">reporter-v2</span></div>
+      </div>
+
+      <h3>sq-v2 결과를 sq-v3 실행에 어떻게 활용하나요?</h3>
+      <p>sq-v2의 <code>scores.json</code>에서 <code>diagnosis_codes</code>를 확인하세요. <code>ZERO_UNRECOGNIZED</code>가 많으면 sq-v3에서 INSERT_KEYWORD 중심으로, <code>NO_SYNONYM</code>이 많으면 ADD_SYNONYM 중심으로 목적을 지정해 실행하면 효과적입니다.</p>
+    </div>
+
+    <!-- 7. 고급 사용법 -->
+    <div class="section" id="s7">
+      <div class="section-header">
+        <div class="section-num">7</div>
+        <div class="section-title">고급 사용법</div>
+      </div>
+
+      <h3>sq-v2 → sq-v3 연계 워크플로</h3>
+      <div class="code-block">
+        <div class="code-header">terminal — 권장 사용 패턴</div>
+        <div class="code-body"><span class="cm"># 1단계: sq-v2로 현황 측정</span>
+<span class="cv">sq-v2</span> <span class="cs">"현재 검색 품질 baseline 측정"</span>
+
+<span class="cm"># 2단계: 결과 확인 후 개선 방향 결정</span>
+<span class="cv">cat</span> docs/reports/sq2-{TIMESTAMP}/search-quality-report.md
+
+<span class="cm"># 3단계: sq-v3로 데이터 수정</span>
+<span class="cv">sq-v3</span> <span class="cs">"ZERO_UNRECOGNIZED 키워드 INSERT 및 NO_SYNONYM 키워드 동의어 추가"</span>
+
+<span class="cm"># 4단계: SQL 검토 후 적용</span>
+<span class="cm"># (fix_preview.md 확인 → write 계정으로 실행)</span>
+
+<span class="cm"># 5단계: sq-v2로 재측정 (개선도 확인)</span>
+<span class="cv">sq-v2</span> <span class="cs">"sq-v3 적용 후 품질 재측정"</span></div>
+      </div>
+
+      <h3>특정 diagnosis_code 키워드만 필터링</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="ck">FLAG_DIR</span>=.agent/sq2-{TIMESTAMP}
+
+<span class="cm"># ZERO_UNRECOGNIZED 키워드 목록 추출</span>
+<span class="cv">jq</span> <span class="cs">'[.[] | select(.diagnosis_codes | contains(["ZERO_UNRECOGNIZED"])) | .keyword]'</span> \
+  <span class="cs">"${FLAG_DIR}/scores.json"</span>
+
+<span class="cm"># ETC_TYPE이고 rank 있는 키워드 (수정 효과 높음)</span>
+<span class="cv">jq</span> <span class="cs">'[.[] | select(.diagnosis_codes | contains(["ETC_TYPE"])) | select(.rank != null)]'</span> \
+  <span class="cs">"${FLAG_DIR}/scores.json"</span>
+
+<span class="cm"># query_type별 평균 점수</span>
+<span class="cv">jq</span> <span class="cs">'group_by(.query_type) | map({type: .[0].query_type, avg: (map(.score) | add / length)})'</span> \
+  <span class="cs">"${FLAG_DIR}/scores.json"</span></div>
+      </div>
+
+      <h3>두 시점 비교 (개선도 측정)</h3>
+      <div class="code-block">
+        <div class="code-header">terminal</div>
+        <div class="code-body"><span class="cm"># before: sq-v3 적용 전</span>
+<span class="cv">jq</span> <span class="cs">'[.[] | .score] | add / length'</span> .agent/sq2-20260501-before/scores.json
+
+<span class="cm"># after: sq-v3 적용 후</span>
+<span class="cv">jq</span> <span class="cs">'[.[] | .score] | add / length'</span> .agent/sq2-20260504-after/scores.json
+
+<span class="cm"># 키워드별 점수 변화 (공통 키워드 비교)</span>
+<span class="cv">jq</span> <span class="cs">-s</span> <span class="cs">'[.[0][] as $b | .[1][] | select(.keyword == $b.keyword) | {keyword: .keyword, before: $b.score, after: .score, delta: (.score - $b.score)}] | sort_by(-.delta)'</span> \
+  .agent/sq2-before/scores.json \
+  .agent/sq2-after/scores.json</div>
+      </div>
+
+      <div class="notice tip">
+        <div class="notice-icon">💡</div>
+        <div class="notice-text">
+          <div class="notice-title">브랜치 이름으로 before/after 관리</div>
+          sq-v2 실행 시 브랜치 이름에 <code>before</code> / <code>after</code>를 포함하면 PR 리뷰에서 개선도를 한눈에 확인할 수 있습니다. (예: <code>sq2/after-keyword-fix-20260504</code>)
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<footer class="site-footer">
+  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
+  &nbsp;·&nbsp;
+  <a href="sq-v2-overview.html">sq-v2 개요</a>
+  &nbsp;·&nbsp;
+  <a href="sq-tutorial.html">sq 튜토리얼</a>
+  &nbsp;·&nbsp;
+  <a href="sq-v3-tutorial.html">sq-v3 튜토리얼</a>
+</footer>
+
+</body>
+</html>

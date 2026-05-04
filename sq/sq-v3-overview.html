@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sq-v3 — Search Quality 워크플로 v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --accent: #7c3aed;
+    --header-h: 96px;
+  }
+
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── 공통 헤더 ── */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #fff;
+    box-shadow: 0 1px 0 var(--border);
+  }
+  .top-nav {
+    padding: 0 48px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .nav-left { display: flex; align-items: center; gap: 4px; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
+  .nav-logo span { color: #0891b2; }
+  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
+  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
+  .nav-link.active { background: #f5f3ff; color: var(--accent); }
+  .nav-badge { font-size: 11px; font-weight: 600; background: #f5f3ff; color: #7c3aed; padding: 3px 10px; border-radius: 20px; }
+  .breadcrumb {
+    padding: 9px 48px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
+  .breadcrumb a:hover { color: var(--accent); }
+  .bc-sep { color: #d1d5db; margin: 0 2px; }
+  .bc-current { color: var(--text-primary); font-weight: 500; }
+
+  /* ── 레이아웃 ── */
+  .layout {
+    display: flex;
+    flex: 1;
+    min-height: calc(100vh - var(--header-h));
+    background: var(--bg);
+  }
+
+  /* ── 사이드바 ── */
+  .sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+    position: sticky;
+    top: var(--header-h);
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto;
+  }
+  .sidebar-logo {
+    padding: 0 24px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sidebar-logo .logo-icon { font-size: 22px; line-height: 1; }
+  .sidebar-logo .logo-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .sidebar-logo .logo-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 1px;
+  }
+  .nav-section-title {
+    padding: 6px 24px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+  .nav-item {
+    display: block;
+    padding: 8px 24px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  .nav-item:hover {
+    color: var(--accent);
+    background: #f5f3ff;
+    border-left-color: var(--accent);
+  }
+  .nav-item .nav-num {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-right: 6px;
+  }
+
+  /* ── 메인 컨텐츠 ── */
+  .main {
+    flex: 1;
+    padding: 28px 36px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 0;
+  }
+
+  /* ── 푸터 ── */
+  .site-footer {
+    text-align: center;
+    padding: 28px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    background: #fff;
+    margin-top: auto;
+  }
+  .site-footer a { color: var(--accent); text-decoration: none; }
+  .site-footer a:hover { text-decoration: underline; }
+
+  /* ── 페이지 헤더 카드 ── */
+  .header {
+    background: #fff;
+    border-radius: 16px;
+    padding: 36px 40px;
+    border: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .header-icon { font-size: 48px; line-height: 1; }
+  .header-text h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; color: #111827; }
+  .header-text p { margin-top: 6px; font-size: 15px; color: #6b7280; font-weight: 400; }
+  .badge {
+    display: inline-block;
+    background: #f5f3ff;
+    color: #7c3aed;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-top: 10px;
+    margin-right: 6px;
+  }
+  .badge-new { background: #fef3c7; color: #d97706; }
+
+  /* ── 카드 공통 ── */
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    padding: 28px 32px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #9ca3af;
+    margin-bottom: 20px;
+  }
+
+  /* ── 2열 그리드 ── */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+
+  /* ── 전체 플로우 ── */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .flow-step {
+    display: flex;
+    gap: 20px;
+    position: relative;
+  }
+  .flow-step:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 19px;
+    top: 40px;
+    bottom: -12px;
+    width: 2px;
+    background: #e5e7eb;
+  }
+  .flow-step + .flow-step { margin-top: 12px; }
+  .step-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .step-body { flex: 1; padding: 8px 0 16px; }
+  .step-label { font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+  .step-title { font-size: 16px; font-weight: 700; color: #111827; margin: 3px 0 6px; }
+  .step-desc { font-size: 14px; color: #4b5563; line-height: 1.6; }
+  .step-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 6px;
+    background: #f3f4f6;
+    color: #374151;
+  }
+
+  /* 색상 팔레트 */
+  .c-cyan    { background: #ecfeff; color: #0891b2; }
+  .c-indigo  { background: #eef2ff; color: #4f46e5; }
+  .c-violet  { background: #f5f3ff; color: #7c3aed; }
+  .c-blue    { background: #eff6ff; color: #2563eb; }
+  .c-sky     { background: #f0f9ff; color: #0284c7; }
+  .c-teal    { background: #f0fdfa; color: #0d9488; }
+  .c-green   { background: #f0fdf4; color: #16a34a; }
+  .c-amber   { background: #fffbeb; color: #d97706; }
+  .c-red     { background: #fef2f2; color: #dc2626; }
+  .c-gray    { background: #f9fafb; color: #374151; }
+
+  .icon-bg-violet { background: #f5f3ff; }
+  .icon-bg-blue   { background: #eff6ff; }
+  .icon-bg-teal   { background: #f0fdfa; }
+  .icon-bg-green  { background: #f0fdf4; }
+  .icon-bg-amber  { background: #fffbeb; }
+  .icon-bg-red    { background: #fef2f2; }
+  .icon-bg-gray   { background: #f3f4f6; }
+  .icon-bg-indigo { background: #eef2ff; }
+  .icon-bg-cyan   { background: #ecfeff; }
+
+  /* ── 버전 비교 카드 ── */
+  .version-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .ver-card {
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    padding: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .ver-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+  }
+  .ver-v1::before { background: #10b981; }
+  .ver-v2::before { background: #2563eb; }
+  .ver-v3::before { background: #7c3aed; }
+  .ver-card .ver-tag { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .ver-card .ver-name { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+  .ver-v1 .ver-name { color: #10b981; }
+  .ver-v2 .ver-name { color: #2563eb; }
+  .ver-v3 .ver-name { color: #7c3aed; }
+  .ver-card .ver-purpose { font-size: 13px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
+  .ver-card .ver-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .ver-card .ver-outputs {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .ver-card .out-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .chip {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: #f9fafb;
+    color: var(--text-secondary);
+    margin: 2px 2px 0 0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .chip-new { background: #f5f3ff; border-color: #ddd6fe; color: #7c3aed; }
+
+  /* ── Wave 구조 ── */
+  .wave-box {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .wave-rows { display: flex; flex-direction: column; gap: 10px; }
+  .wave-row { display: flex; gap: 10px; align-items: stretch; }
+  .wave-label-box {
+    width: 68px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    padding: 8px 4px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .wl-a { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+  .wl-b { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+  .wl-c { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
+  .wl-d { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+  .wave-agents { flex: 1; display: flex; gap: 8px; align-items: stretch; }
+  .agent-box {
+    flex: 1;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .agent-box.new-agent { border-color: #ddd6fe; background: #fdfcff; }
+  .agent-name { font-size: 13px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .badge-new-sm {
+    font-size: 9px; font-weight: 800;
+    background: #7c3aed; color: white;
+    padding: 1px 5px; border-radius: 3px;
+    text-transform: uppercase;
+  }
+  .agent-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .wave-arrow { text-align: center; color: #d1d5db; font-size: 16px; margin: -4px 0; }
+
+  /* ── 에이전트 그리드 ── */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .agent-card {
+    border-radius: 10px;
+    padding: 14px 16px;
+    border: 1px solid #e5e7eb;
+  }
+  .agent-emoji { font-size: 22px; }
+  .agent-name-lg { font-size: 14px; font-weight: 700; color: #111827; margin: 6px 0 3px; }
+  .agent-wave {
+    font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px;
+    display: inline-block; margin-bottom: 6px;
+  }
+  .wa { background: #eff6ff; color: #2563eb; }
+  .wb { background: #f0fdf4; color: #16a34a; }
+  .wc { background: #f5f3ff; color: #7c3aed; }
+  .wd { background: #fffbeb; color: #d97706; }
+  .agent-desc-lg { font-size: 12px; color: #6b7280; line-height: 1.5; }
+
+  /* ── diagnosis 테이블 ── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+  th {
+    text-align: left; padding: 10px 14px;
+    background: #f9fafb; border: 1px solid var(--border);
+    font-weight: 600; color: var(--text-secondary); font-size: 12px;
+  }
+  td {
+    padding: 10px 14px; border: 1px solid var(--border);
+    color: var(--text-secondary); vertical-align: top;
+  }
+  tr:hover td { background: #fafafa; }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: #ecfeff;
+    color: #0891b2;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  code.violet { background: #f5f3ff; color: #7c3aed; }
+
+  /* ── 우선순위 배지 ── */
+  .p-badge {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 2px 7px; border-radius: 4px; text-transform: uppercase;
+  }
+  .pb-high   { background: #fef2f2; color: #dc2626; }
+  .pb-medium { background: #fffbeb; color: #d97706; }
+  .pb-low    { background: #eff6ff; color: #2563eb; }
+  .pb-none   { background: #f9fafb; color: #9ca3af; }
+
+  /* ── 산출물 그리드 ── */
+  .output-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .output-item {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: #f9fafb; border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px;
+  }
+  .output-item.new-out { background: #fdfcff; border-color: #ddd6fe; }
+  .output-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+  .output-fname {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; font-weight: 600; color: #0891b2; margin-bottom: 3px;
+  }
+  .output-item.new-out .output-fname { color: #7c3aed; }
+  .output-fdesc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+  /* ── DB 전략 ── */
+  .db-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .db-card {
+    border-radius: 10px; border: 1px solid var(--border);
+    padding: 16px; background: #f9fafb;
+  }
+  .db-card.active { border-color: #bbf7d0; background: #f0fdf4; }
+  .db-card.future { opacity: 0.8; }
+  .db-phase { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 4px; }
+  .db-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+  .db-card.active .db-title { color: #16a34a; }
+  .db-card.future .db-title { color: #d97706; }
+  .db-list { list-style: none; }
+  .db-list li { font-size: 12px; color: var(--text-secondary); padding: 3px 0 3px 14px; position: relative; }
+  .db-list li::before { content: '→'; position: absolute; left: 0; color: #d1d5db; }
+
+  /* ── 코드 블록 ── */
+  .code-block {
+    background: #1e2030; border-radius: 10px; overflow: hidden; margin: 12px 0;
+  }
+  .code-header {
+    background: #2a2d3e; padding: 8px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: #67e8f9; font-weight: 500;
+  }
+  .code-body {
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; color: #a9b1d6; line-height: 1.7;
+    white-space: pre-wrap; overflow-x: auto;
+  }
+  .code-body .cm { color: #565f89; }
+  .code-body .ck { color: #67e8f9; }
+  .code-body .cv { color: #7aa2f7; }
+  .code-body .cs { color: #9ece6a; }
+  .code-body .cn { color: #ff9e64; }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { padding: 24px 20px 60px; }
+  }
+  @media (max-width: 768px) {
+    .top-nav { padding: 0 20px; }
+    .breadcrumb { padding: 9px 20px; }
+    .version-grid, .grid-2, .grid-3, .agent-grid, .output-grid, .db-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="top-nav">
+    <div class="nav-left">
+      <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
+      <div class="nav-divider"></div>
+      <a href="sq-overview.html" class="nav-link">sq</a>
+      <a href="#" class="nav-link">sq-v2</a>
+      <a href="sq-v3-tutorial.html" class="nav-link active">sq-v3</a>
+    </div>
+    <span class="nav-badge">Search Quality v3</span>
+  </nav>
+  <div class="breadcrumb">
+    <a href="../index.html">~/tmux</a>
+    <span class="bc-sep">/</span>
+    <a href="sq-v3-tutorial.html">sq-v3</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">개요</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ── 사이드바 ── -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-icon">🔧</span>
+      <div>
+        <div class="logo-title">sq-v3</div>
+        <div class="logo-sub">Search Quality v3 개요</div>
+      </div>
+    </div>
+    <div class="nav-section-title">비교</div>
+    <a href="#versions" class="nav-item"><span class="nav-num">—</span>버전 비교</a>
+    <div class="nav-section-title">구조</div>
+    <a href="#flow" class="nav-item"><span class="nav-num">—</span>전체 실행 흐름</a>
+    <a href="#waves" class="nav-item"><span class="nav-num">—</span>Wave 구조</a>
+    <a href="#agents" class="nav-item"><span class="nav-num">—</span>에이전트 구성</a>
+    <div class="nav-section-title">데이터</div>
+    <a href="#keywords" class="nav-item"><span class="nav-num">—</span>키워드 수집 전략</a>
+    <a href="#diagnosis" class="nav-item"><span class="nav-num">—</span>diagnosis → fix_type</a>
+    <div class="nav-section-title">결과</div>
+    <a href="#outputs" class="nav-item"><span class="nav-num">—</span>산출물</a>
+    <a href="#gates" class="nav-item"><span class="nav-num">—</span>게이트 체크</a>
+    <a href="#db" class="nav-item"><span class="nav-num">—</span>DB 접근 전략</a>
+  </nav>
+
+  <!-- ── 메인 ── -->
+  <div class="main">
+
+  <!-- 페이지 헤더 -->
+  <div class="header">
+    <div class="header-icon">🔧</div>
+    <div class="header-text">
+      <h1>sq-v3</h1>
+      <p>search_keywords 관련 테이블을 수정해 검색 품질을 직접 개선하는 워크플로</p>
+      <span class="badge">search_keywords 수정</span>
+      <span class="badge">SQL 자동 생성</span>
+      <span class="badge badge-new">v3 신규</span>
+    </div>
+  </div>
+
+  <!-- ── 버전 비교 ── -->
+  <div class="card" id="versions">
+    <div class="card-title">버전 비교 — sq / sq-v2 / sq-v3</div>
+    <div class="version-grid">
+      <div class="ver-card ver-v1">
+        <div class="ver-tag">v1</div>
+        <div class="ver-name">sq</div>
+        <div class="ver-purpose">코드 수정</div>
+        <div class="ver-desc">OpenSearch DSL·API 코드를 직접 수정. 쿼리 가중치, 인덱스 매핑 변경 후 PR 생성.</div>
+        <div class="ver-outputs">
+          <div class="out-label">산출물</div>
+          <span class="chip">수정된 코드</span>
+          <span class="chip">PR</span>
+          <span class="chip">scores.json</span>
+        </div>
+      </div>
+      <div class="ver-card ver-v2">
+        <div class="ver-tag">v2</div>
+        <div class="ver-name">sq-v2</div>
+        <div class="ver-purpose">품질 측정·진단</div>
+        <div class="ver-desc">키워드 500개 품질 측정. diagnosis_codes로 문제를 진단하지만 코드·데이터는 변경하지 않음.</div>
+        <div class="ver-outputs">
+          <div class="out-label">산출물</div>
+          <span class="chip">scores.json</span>
+          <span class="chip">report.md</span>
+        </div>
+      </div>
+      <div class="ver-card ver-v3">
+        <div class="ver-tag">v3 — 현재</div>
+        <div class="ver-name">sq-v3</div>
+        <div class="ver-purpose">데이터 수정·개선</div>
+        <div class="ver-desc">수정 효과가 큰 키워드를 우선 수집하고, keyword_fixer가 SQL을 자동 생성. 검토 후 적용.</div>
+        <div class="ver-outputs">
+          <div class="out-label">산출물</div>
+          <span class="chip">scores.json</span>
+          <span class="chip chip-new">fix_search_keywords.sql</span>
+          <span class="chip chip-new">fix_preview.md</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top: 14px;">
+      <table>
+        <thead>
+          <tr>
+            <th>항목</th>
+            <th>sq</th>
+            <th>sq-v2</th>
+            <th>sq-v3</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>핵심 목적</td>
+            <td>코드 수정</td>
+            <td>품질 측정·진단</td>
+            <td>데이터 수정·개선</td>
+          </tr>
+          <tr>
+            <td>DB 접근</td>
+            <td>read-only 조회</td>
+            <td>read-only 조회</td>
+            <td>read-only + SQL 파일 생성</td>
+          </tr>
+          <tr>
+            <td>코드 변경</td>
+            <td>✅ OpenSearch DSL, API</td>
+            <td>❌ 읽기만</td>
+            <td>❌ 읽기만 (SQL은 별도 검토)</td>
+          </tr>
+          <tr>
+            <td>keyword_fixer 에이전트</td>
+            <td>—</td>
+            <td>—</td>
+            <td><strong style="color:#7c3aed">✅ Wave C 신규</strong></td>
+          </tr>
+          <tr>
+            <td>fix_type / fix_priority</td>
+            <td>—</td>
+            <td>—</td>
+            <td><strong style="color:#7c3aed">✅ scores.json에 추가</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── 전체 실행 흐름 ── -->
+  <div class="card" id="flow">
+    <div class="card-title">전체 실행 흐름</div>
+    <div class="flow">
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-gray">🗄️</div>
+        <div class="step-body">
+          <div class="step-label">DB 연결 확인</div>
+          <div class="step-title">danble PostgreSQL read-only 접속 테스트</div>
+          <div class="step-desc"><code>~/.config/sq/db.env</code>에서 자격증명 로드 후 psql 연결 테스트. 실패 시 경고만 출력하고 계속 진행.</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-indigo">📐</div>
+        <div class="step-body">
+          <div class="step-label">Architect</div>
+          <div class="step-title">계획 수립 &amp; 에이전트 선택</div>
+          <div class="step-desc">수정 목적을 분석해 <code>plan.md</code>와 <code>agents.txt</code> 자동 생성. runner / scorer / keyword_fixer / reporter 중 필요한 에이전트를 선택.</div>
+          <div class="step-tags">
+            <span class="tag c-blue">항상: runner · scorer · keyword_fixer · reporter</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-blue">🏃</div>
+        <div class="step-body">
+          <div class="step-label">Wave A</div>
+          <div class="step-title">runner — 키워드 수집 &amp; 검색 API 배치 호출</div>
+          <div class="step-desc">PHASE 1 DB 쿼리로 4가지 유형 키워드 수집 (ZERO_RESULT 150 + ETC_TYPE 100 + NO_SYNONYM 100 + POSSIBLE_FALLBACK 100) + 웹서칭 50개 → 검색 API 배치 호출 → <code>results/*.json</code> 저장.</div>
+          <div class="step-tags">
+            <span class="tag c-red">ZERO_RESULT 150개</span>
+            <span class="tag c-amber">ETC_TYPE 100개</span>
+            <span class="tag c-blue">NO_SYNONYM 100개</span>
+            <span class="tag c-violet">POSSIBLE_FALLBACK 100개</span>
+            <span class="tag c-gray">웹서칭 50개</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-green">📊</div>
+        <div class="step-body">
+          <div class="step-label">Wave B</div>
+          <div class="step-title">scorer — v2 채점 + fixable 필드 추가</div>
+          <div class="step-desc">results/*.json을 v2 채점 체계(100점/6항목)로 채점하고, <strong>v3 신규 필드</strong> <code>fixable</code> / <code>fix_type</code> / <code>fix_priority</code>를 포함한 <code>scores.json</code> 생성.</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-violet">🔧</div>
+        <div class="step-body">
+          <div class="step-label">Wave C — 신규</div>
+          <div class="step-title">keyword_fixer — 컨텍스트 조회 &amp; SQL 생성</div>
+          <div class="step-desc">scores.json의 fixable 키워드마다 PHASE 2 컨텍스트 쿼리(F-1~F-6) 실행 → <code>fix_search_keywords.sql</code> (BEGIN/COMMIT 트랜잭션 포함) + <code>fix_preview.md</code> 생성. <strong>현재 read-only이므로 SQL 파일만 생성, 실행하지 않음.</strong></div>
+          <div class="step-tags">
+            <span class="tag c-violet">⚠️ SQL 파일만 생성 — read-only 계정</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-amber">📄</div>
+        <div class="step-body">
+          <div class="step-label">Wave D</div>
+          <div class="step-title">reporter — reporter-v3로 리포트 생성</div>
+          <div class="step-desc">reporter-v3 사용. §7 수정 계획 요약(fix_preview.md 기반) + §8 SQL 미리보기 30줄 섹션이 추가된 리포트 3종 생성.</div>
+          <div class="step-tags">
+            <span class="tag c-green">search-quality-report.md</span>
+            <span class="tag c-gray">search-quality-detail.md</span>
+            <span class="tag c-gray">search-quality-detail.csv</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Wave 구조 ── -->
+  <div class="card" id="waves">
+    <div class="card-title">Wave 구조 (v2 → v3 변화)</div>
+    <div class="wave-box">
+      <div class="wave-rows">
+        <div class="wave-row">
+          <div class="wave-label-box wl-a">Wave A</div>
+          <div class="wave-agents">
+            <div class="agent-box">
+              <div class="agent-name">runner</div>
+              <div class="agent-desc">유형별 DB 쿼리 4종 + 웹서칭 → 검색 API 배치 호출 → results/*.json<br>v3: rank 상위 → ZERO_RESULT/ETC/NO_SYNONYM/POSSIBLE_FB 우선</div>
+            </div>
+          </div>
+        </div>
+        <div class="wave-arrow">↓</div>
+        <div class="wave-row">
+          <div class="wave-label-box wl-b">Wave B</div>
+          <div class="wave-agents">
+            <div class="agent-box">
+              <div class="agent-name">scorer</div>
+              <div class="agent-desc">v2 채점 체계 (100점 / 6항목) + <strong>v3 신규:</strong> fixable, fix_type, fix_priority → scores.json</div>
+            </div>
+          </div>
+        </div>
+        <div class="wave-arrow">↓</div>
+        <div class="wave-row">
+          <div class="wave-label-box wl-c">Wave C</div>
+          <div class="wave-agents">
+            <div class="agent-box new-agent">
+              <div class="agent-name">keyword_fixer <span class="badge-new-sm">신규</span></div>
+              <div class="agent-desc">scores.json → PHASE 2 컨텍스트 쿼리(F-1~F-6) → fix_search_keywords.sql + fix_preview.md<br>⚠️ SQL만 생성, 직접 실행 안 함</div>
+            </div>
+          </div>
+        </div>
+        <div class="wave-arrow">↓</div>
+        <div class="wave-row">
+          <div class="wave-label-box wl-d">Wave D</div>
+          <div class="wave-agents">
+            <div class="agent-box">
+              <div class="agent-name">reporter</div>
+              <div class="agent-desc">reporter-v3 사용 — §7 수정 계획 요약 + §8 SQL 미리보기 추가<br>→ search-quality-report.md / detail.md / detail.csv</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap;">
+      <span class="tag c-cyan">sq-v2: Wave A → B → C (3단계)</span>
+      <span class="tag c-violet">sq-v3: Wave A → B → C → D (4단계, keyword_fixer 삽입)</span>
+    </div>
+  </div>
+
+  <!-- ── 에이전트 구성 ── -->
+  <div class="card" id="agents">
+    <div class="card-title">에이전트 구성</div>
+    <div class="agent-grid">
+      <div class="agent-card">
+        <div class="agent-emoji">🏃</div>
+        <div class="agent-name-lg">runner</div>
+        <span class="agent-wave wa">Wave A</span>
+        <div class="agent-desc-lg">
+          sq-v3-read-queries.sql PHASE 1 쿼리 4종 실행<br>
+          • R-1: ZERO_RESULT 150개 → runner_zero_result.csv<br>
+          • R-2: ETC_TYPE 100개 → runner_etc_type.csv<br>
+          • R-3: NO_SYNONYM 100개 → runner_no_synonym.csv<br>
+          • R-4: POSSIBLE_FALLBACK 100개 → runner_possible_fallback.csv<br>
+          + 웹서칭 트렌드 50개 → 검색 API 배치 호출
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-emoji">📊</div>
+        <div class="agent-name-lg">scorer</div>
+        <span class="agent-wave wb">Wave B</span>
+        <div class="agent-desc-lg">
+          v2 채점 체계 (6항목 100점) 동일 적용<br>
+          + <strong>v3 신규 필드 출력:</strong><br>
+          • fixable: true / false<br>
+          • fix_type: INSERT_KEYWORD / ADD_SYNONYM / …<br>
+          • fix_priority: HIGH / MEDIUM / LOW / NONE
+        </div>
+      </div>
+      <div class="agent-card" style="border-color:#ddd6fe;">
+        <div class="agent-emoji">🔧</div>
+        <div class="agent-name-lg">keyword_fixer <span class="badge-new-sm">신규</span></div>
+        <span class="agent-wave wc">Wave C</span>
+        <div class="agent-desc-lg">
+          scores.json의 fixable 키워드마다:<br>
+          • PHASE 2 쿼리(F-1~F-6)로 컨텍스트 조회<br>
+          • fix_type에 따른 SQL 생성 (BEGIN/COMMIT 포함)<br>
+          • fix_preview.md 요약표 생성<br>
+          ⚠️ read-only 계정이므로 SQL 실행 안 함
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-emoji">📄</div>
+        <div class="agent-name-lg">reporter</div>
+        <span class="agent-wave wd">Wave D</span>
+        <div class="agent-desc-lg">
+          reporter-v3 스크립트 사용 (v2 대비 추가):<br>
+          • §7 수정 계획 요약 (fix_preview.md 기반)<br>
+          • §8 SQL 미리보기 30줄<br>
+          • CSV 헤더에 fixable/fix_type/fix_priority 추가<br>
+          • detail.md에 fix_type / fix_priority 컬럼 추가
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 키워드 수집 전략 ── -->
+  <div class="card" id="keywords">
+    <div class="card-title">키워드 수집 전략 — v2 → v3 변화</div>
+    <table>
+      <thead>
+        <tr><th>수집 유형</th><th>sq / sq-v2</th><th>sq-v3</th><th>변경 이유</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>웹서칭 (트렌드)</td>
+          <td>250개</td>
+          <td>50개</td>
+          <td>수정 효과보다 현황 파악 목적 → 비중 축소</td>
+        </tr>
+        <tr>
+          <td>DB — ZERO_RESULT</td>
+          <td style="color:#9ca3af">rank 상위 통합</td>
+          <td><strong>150개</strong> (result_product_count=0)</td>
+          <td>수정 즉시 검색 결과 생김 → 최우선</td>
+        </tr>
+        <tr>
+          <td>DB — ETC_TYPE</td>
+          <td style="color:#9ca3af">—</td>
+          <td><strong>100개</strong> (keyword_type=ETC)</td>
+          <td>must 필터 없음 → 타입 변경으로 개선 가능</td>
+        </tr>
+        <tr>
+          <td>DB — NO_SYNONYM</td>
+          <td style="color:#9ca3af">—</td>
+          <td><strong>100개</strong> (SAME 관계 없음)</td>
+          <td>동의어 추가로 Tier 1 결과 다양화</td>
+        </tr>
+        <tr>
+          <td>DB — POSSIBLE_FALLBACK</td>
+          <td style="color:#9ca3af">—</td>
+          <td><strong>100개</strong> (발골사전 미등록)</td>
+          <td>카테고리·브랜드 매핑 추가로 FALLBACK 해소</td>
+        </tr>
+        <tr>
+          <td>합계</td>
+          <td>500개</td>
+          <td>500개 (중복 제거 후)</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── diagnosis → fix_type ── -->
+  <div class="card" id="diagnosis">
+    <div class="card-title">diagnosis_codes → fix_type 매핑</div>
+    <table>
+      <thead>
+        <tr><th>diagnosis_code</th><th>파이프라인 실패 지점</th><th>수정 테이블</th><th>fix_type</th><th>priority</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ZERO_UNRECOGNIZED</code></td>
+          <td>_classify_tokens 매칭 실패 → 발골 전부 없음</td>
+          <td><code class="violet">search_keywords</code> INSERT</td>
+          <td>INSERT_KEYWORD</td>
+          <td><span class="p-badge pb-high">HIGH</span></td>
+        </tr>
+        <tr>
+          <td><code>ZERO_NO_MATCH</code></td>
+          <td>Tier 1 &amp; 2 모두 0건</td>
+          <td><code class="violet">search_keyword_relations</code> SIMILAR INSERT</td>
+          <td>ADD_SIMILAR</td>
+          <td><span class="p-badge pb-low">LOW</span></td>
+        </tr>
+        <tr>
+          <td><code>ETC_TYPE</code></td>
+          <td>keyword_type=ETC → must 필터 없이 should만</td>
+          <td><code class="violet">search_keywords</code> type UPDATE + 매핑 INSERT</td>
+          <td>FIX_KEYWORD_TYPE</td>
+          <td><span class="p-badge pb-medium">MEDIUM</span></td>
+        </tr>
+        <tr>
+          <td><code>NO_SYNONYM</code></td>
+          <td>_expand_keywords SAME 0건 → Tier 1 원본만</td>
+          <td><code class="violet">search_keyword_relations</code> SAME INSERT</td>
+          <td>ADD_SYNONYM</td>
+          <td><span class="p-badge pb-medium">MEDIUM</span></td>
+        </tr>
+        <tr>
+          <td><code>POSSIBLE_FALLBACK</code></td>
+          <td>extracted 없음 → should 전체 검색</td>
+          <td><code class="violet">search_category/brand_keywords</code> INSERT</td>
+          <td>FIX_CATEGORY_MAPPING / FIX_BRAND_MAPPING</td>
+          <td><span class="p-badge pb-medium">MEDIUM</span></td>
+        </tr>
+        <tr>
+          <td><code>BRAND_MAPPING_WRONG</code></td>
+          <td>잘못된 brand.id 필터</td>
+          <td><code class="violet">search_brand_keywords</code> brand_id UPDATE</td>
+          <td>FIX_BRAND_MAPPING</td>
+          <td><span class="p-badge pb-medium">MEDIUM</span></td>
+        </tr>
+        <tr>
+          <td><code>CATEGORY_MAPPING_WRONG</code></td>
+          <td>product_type/midtype 불일치</td>
+          <td><code class="violet">search_category_keywords</code> UPDATE</td>
+          <td>FIX_CATEGORY_MAPPING</td>
+          <td><span class="p-badge pb-medium">MEDIUM</span></td>
+        </tr>
+        <tr>
+          <td><code>LOW_RELEVANCE</code></td>
+          <td>OpenSearch 분석기 이슈</td>
+          <td>코드 수정 필요</td>
+          <td>NOT_FIXABLE</td>
+          <td><span class="p-badge pb-none">NONE</span></td>
+        </tr>
+        <tr>
+          <td><code>SOLDOUT_EXPOSED</code></td>
+          <td>is_sold_out 필터 없음</td>
+          <td>코드 수정 필요</td>
+          <td>NOT_FIXABLE</td>
+          <td><span class="p-badge pb-none">NONE</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── 산출물 ── -->
+  <div class="card" id="outputs">
+    <div class="card-title">산출물</div>
+    <div class="output-grid">
+      <div class="output-item">
+        <div class="output-icon">📊</div>
+        <div>
+          <div class="output-fname">scores.json</div>
+          <div class="output-fdesc">전체 키워드 채점 결과 (v2 체계 + fixable / fix_type / fix_priority 필드)</div>
+        </div>
+      </div>
+      <div class="output-item">
+        <div class="output-icon">📄</div>
+        <div>
+          <div class="output-fname">search-quality-report.md</div>
+          <div class="output-fdesc">요약 리포트 — §7 수정 계획, §8 SQL 미리보기 30줄 포함</div>
+        </div>
+      </div>
+      <div class="output-item">
+        <div class="output-icon">📋</div>
+        <div>
+          <div class="output-fname">search-quality-detail.md / .csv</div>
+          <div class="output-fdesc">전체 키워드 상세 — fix_type / fix_priority 컬럼 추가</div>
+        </div>
+      </div>
+      <div class="output-item new-out">
+        <div class="output-icon">🔧</div>
+        <div>
+          <div class="output-fname">fix_search_keywords.sql ★</div>
+          <div class="output-fdesc">검토 후 적용할 수정 SQL (BEGIN/COMMIT 트랜잭션 포함)</div>
+        </div>
+      </div>
+      <div class="output-item new-out">
+        <div class="output-icon">🔍</div>
+        <div>
+          <div class="output-fname">fix_preview.md ★</div>
+          <div class="output-fdesc">수정 내용 요약표 (fix_type / keyword / 변경 내용 / 근거 / 예상 효과)</div>
+        </div>
+      </div>
+      <div class="output-item new-out">
+        <div class="output-icon">📸</div>
+        <div>
+          <div class="output-fname">snapshot_before_fix.csv ★</div>
+          <div class="output-fdesc">수정 전 키워드 상태 스냅샷 (write 적용 후 before/after 비교용)</div>
+        </div>
+      </div>
+      <div class="output-item new-out">
+        <div class="output-icon">📁</div>
+        <div>
+          <div class="output-fname">runner_*.csv ★</div>
+          <div class="output-fdesc">유형별 수집 키워드 (zero_result / etc_type / no_synonym / possible_fallback)</div>
+        </div>
+      </div>
+      <div class="output-item">
+        <div class="output-icon">📈</div>
+        <div>
+          <div class="output-fname">impact_analysis.md</div>
+          <div class="output-fdesc">SQL 영향도 분석 (변경 대상 키워드 수, 예상 개선 효과)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 게이트 체크 ── -->
+  <div class="card" id="gates">
+    <div class="card-title">게이트 체크 (5단계)</div>
+    <table>
+      <thead>
+        <tr><th>#</th><th>게이트 항목</th><th>sq-v2</th><th>sq-v3</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1/5</td><td>검색 결과 JSON ≥ 100개</td><td>✓</td><td>✓</td></tr>
+        <tr><td>2/5</td><td>scores.json 존재 + fixable 건수 출력</td><td>✓</td><td>✓</td></tr>
+        <tr><td style="color:#7c3aed;font-weight:700">3/5</td><td><code class="violet">fix_search_keywords.sql</code> 존재 확인</td><td style="color:#9ca3af">—</td><td style="color:#7c3aed;font-weight:700">✅ 신규</td></tr>
+        <tr><td style="color:#7c3aed;font-weight:700">4/5</td><td><code class="violet">fix_preview.md</code> 존재 확인</td><td style="color:#9ca3af">—</td><td style="color:#7c3aed;font-weight:700">✅ 신규</td></tr>
+        <tr><td>5/5</td><td>리포트 파일 3개 (report / detail.md / detail.csv)</td><td>✓</td><td>✓</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── DB 접근 전략 ── -->
+  <div class="card" id="db">
+    <div class="card-title">DB 접근 2단계 전략</div>
+    <div class="db-grid">
+      <div class="db-card active">
+        <div class="db-phase">현재 단계</div>
+        <div class="db-title">✅ Read-Only (지금)</div>
+        <ul class="db-list">
+          <li>계정: <code>danble_read_only</code> (read replica)</li>
+          <li>runner: PHASE 1 쿼리로 수집 키워드 결정</li>
+          <li>keyword_fixer: PHASE 2 컨텍스트 조회</li>
+          <li>keyword_fixer: SQL 파일 생성만, 실행 안 함</li>
+          <li>사람이 fix_preview.md 검토 후 직접 적용</li>
+        </ul>
+      </div>
+      <div class="db-card future">
+        <div class="db-phase">추후 단계</div>
+        <div class="db-title">⏳ Write 자동 적용 (추후)</div>
+        <ul class="db-list">
+          <li>계정: write 계정 (<code>~/.config/sq/db_write.env</code>)</li>
+          <li>sql_applier 에이전트 추가 (Wave C-2)</li>
+          <li>사람 승인 후 write 계정으로 SQL 자동 실행</li>
+          <li>snapshot_after_fix.csv 저장</li>
+          <li>before/after 비교 reporter 생성 (Wave D-2)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /.main -->
+</div><!-- /.layout -->
+
+<footer class="site-footer">
+  <a href="sq-v3-tutorial.html">← sq-v3 튜토리얼</a> &nbsp;·&nbsp;
+  <a href="sq-overview.html">sq 개요</a> &nbsp;·&nbsp;
+  <a href="sq-versions.md">버전 비교 MD</a>
+</footer>
+
+</body>
+</html>

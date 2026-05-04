@@ -1391,6 +1391,7 @@ elif grep -q "^reporter|" "${FLAG_DIR}/agents.txt" 2>/dev/null; then
 fi
 
 # ── Wave + Debate 2 루프 (REWORK 시 재실행) ─────────────────
+MAX_REWORK=3
 REWORK_COUNT=0
 
 if [[ -n "${TMUX:-}" ]]; then
@@ -1548,6 +1549,10 @@ while true; do
 
   REWORK_COUNT=$((REWORK_COUNT + 1))
   echo "  (누적 REWORK: ${REWORK_COUNT}회)"
+  if [[ $REWORK_COUNT -ge $MAX_REWORK ]]; then
+    echo "  ⚠️  최대 REWORK 횟수(${MAX_REWORK}회) 도달 — 강제 진행"
+    break
+  fi
 done
 
 

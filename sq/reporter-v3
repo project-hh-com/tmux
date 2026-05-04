@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+# reporter-v3 — Search Quality 리포트 생성기 (v3 — 수정 계획 포함)
+#
+# sq-v3에서 Wave D 에이전트로 호출됩니다.
+# 독립 실행도 가능: FLAG_DIR=... SQ_OUTPUT_DIR=... FEATURE=... reporter-v3
+#
+# v2 대비 변경:
+#   [D1] fix_preview.md 읽어 §7 수정 계획 요약 섹션 추가
+#   [D2] fix_search_keywords.sql 미리보기 30줄 §8 섹션 추가
+#   [D3] scores.json의 fixable/fix_type/fix_priority 집계 추가
+
+set -euo pipefail
+
+# ── 인자 / 환경변수 처리 ──────────────────────────────────────
+FLAG_DIR="${FLAG_DIR:-${1:-}}"
+SQ_OUTPUT_DIR="${SQ_OUTPUT_DIR:-${2:-}}"
+FEATURE="${FEATURE:-${3:-검색 품질 평가 (v3)}}"
+
+if [[ -z "$FLAG_DIR" || -z "$SQ_OUTPUT_DIR" ]]; then
+  echo "❌ FLAG_DIR 또는 SQ_OUTPUT_DIR이 설정되지 않았습니다."
+  echo "   예: FLAG_DIR=.agent/sq-v3-XXXX SQ_OUTPUT_DIR=docs/reports/sq-v3-XXXX reporter-v3"
+  exit 1
+fi
+
+if [[ ! -f "${FLAG_DIR}/scores.json" ]]; then
+  echo "❌ scores.json을 찾을 수 없습니다: ${FLAG_DIR}/scores.json"
+  echo "   scorer가 먼저 완료되어야 합니다."
+  exit 1
+fi
+
+mkdir -p "${SQ_OUTPUT_DIR}"
+
+# ── DB 환경변수 로드 ─────────────────────────────────────────
+SQ_DB_ENV="${HOME}/.config/sq/db.env"
+if [[ -f "${SQ_DB_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  source "${SQ_DB_ENV}"
+fi
+PGHOST="${PGHOST:-}"
+PGDATABASE="${PGDATABASE:-danble}"
+PGUSER="${PGUSER:-danble_read_only}"
+PGPASSWORD="${PGPASSWORD:-}"
+PGPORT="${PGPORT:-5432}"
+PGSSLMODE="${PGSSLMODE:-require}"
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+
+# ── 프롬프트 생성 ────────────────────────────────────────────
+PROMPT_FILE="${FLAG_DIR}/prompt_reporter_v3.txt"
+DONE_FILE="${FLAG_DIR}/reporter.done"
+
+cat > "${PROMPT_FILE}" << REPORTERPROMPT
+당신은 reporter 에이전트입니다 (v3). scorer v2가 생성한 ${FLAG_DIR}/scores.json 과 keyword_fixer가 생성한 ${FLAG_DIR}/fix_preview.md 를 읽어 검색 품질 리포트를 생성하세요.
+
+## ⛔ 절대 금지 사항 — 반드시 먼저 읽으세요
+
+1. **독립 채점 금지** — scores.json이 유일한 채점 소스입니다. LLM이 직접 점수를 재산정하지 마세요.
+2. **독립 Python 스크립트 생성 금지** — 별도 스크립트를 만들어 scores.json을 재처리하는 방식 금지.
+3. **점수 수정 금지** — scores.json의 점수·등급·관련성 비율·진단 값을 절대 변경하지 마세요.
+4. **이중 채점 금지** — 리포트 생성 과정에서 관련성을 다시 판단하거나 점수를 재부여하지 마세요.
+
+## ⚠️ 집계 시 반드시 segment를 분리하세요 (v2 기준)
+
+- **GENERAL**: 정상 검색 결과 키워드 → 핵심 품질 지표에 사용
+- **POSSIBLE_FALLBACK**: 엔터티 발골 실패 의심 + 광범위 결과 → 별도 집계, 평균 점수에 포함
+- **ZERO_RESULT**: 결과 0건 키워드 → 별도 집계, 평균 점수에서 제외
+
+평균 점수, 등급 분포는 GENERAL + POSSIBLE_FALLBACK 포함으로 계산합니다.
+
+## ⚠️ v2 diagnosis_codes 집계
+
+scores.json의 diagnosis_codes 배열에서 코드별 건수를 집계하세요:
+ZERO_UNRECOGNIZED / ZERO_NO_MATCH / POSSIBLE_FALLBACK / ETC_TYPE /
+BRAND_MAPPING_WRONG / CATEGORY_MAPPING_WRONG / LOW_RELEVANCE /
+POOR_RANKING / NO_SYNONYM / SOLDOUT_EXPOSED
+
+## ⭐ v3 신규 — fixable 필드 집계
+
+scores.json의 fixable/fix_type/fix_priority 필드를 집계하세요:
+- fixable=true 총 건수
+- fix_type별 건수 (INSERT_KEYWORD, ADD_SYNONYM, FIX_KEYWORD_TYPE, ADD_SIMILAR, FIX_CATEGORY_MAPPING, FIX_BRAND_MAPPING, NOT_FIXABLE)
+- fix_priority별 건수 (HIGH, MEDIUM, LOW, NONE)
+
+## ⭐ v3 신규 — 파이프라인 시나리오 판별
+
+scores.json의 각 키워드에 대해 아래 규칙으로 `pipeline_scenario`를 판별하세요.
+판별 순서가 중요합니다 (위에서 아래로 우선 적용):
+
+| 우선순위 | 조건 | pipeline_scenario 값 |
+|---------|------|---------------------|
+| 1 | result_count = 0 AND ZERO_UNRECOGNIZED in diagnosis_codes | `D1.ZERO_미등록` |
+| 2 | result_count = 0 AND ZERO_NO_MATCH in diagnosis_codes | `D2.ZERO_매칭없음` |
+| 3 | result_count = 0 (기타) | `D3.ZERO_기타` |
+| 4 | segment = POSSIBLE_FALLBACK (발골 실패, should 쿼리만 동작) | `C.텍스트_검색` |
+| 5 | fallback_tier = 2 (Tier 1 = 0건 → Tier 2 SIMILAR 폴백 발동) | `A2.정밀_필터_Tier2` |
+| 6 | query_type = C (COLOR만 추출, extracted_colors) | `B.색상_필터` |
+| 7 | query_type = A (BRAND 발골 성공, Tier 1) | `A.정밀_필터_브랜드` |
+| 8 | query_type = B (CATEGORY 발골 성공, Tier 1) | `A.정밀_필터_카테고리` |
+| 9 | query_type = D (복합 발골 성공, Tier 1) | `A.정밀_필터_복합` |
+| 10 | 그 외 | `E.판별불가` |
+
+**시나리오 해설 (sq-opensearch-logic.md §4 기반):**
+- `A.*` : 발골사전(extracted_brands/colors/category) 성공 → must 필터 적용 → 정밀 검색
+- `A2.*`: 발골 성공했으나 Tier 1 결과 0건 → SIMILAR 관계 활성화 → Tier 2 폴백
+- `B.*` : COLOR만 추출 → color.id must 필터 (카테고리/브랜드 없이 색상 필터)
+- `C.*` : 발골 실패 → should 쿼리만 → min_score=0.3 → total_count 과대 (POSSIBLE_FALLBACK)
+- `D1.*`: extracted·keywords·unmatched 모두 없음 또는 사전 미등록 → 즉시 빈 결과 반환
+- `D2.*`: 발골은 성공했으나 Tier 1·Tier 2 모두 매칭 상품 0건
+
+---
+
+## 🔍 백엔드 검색 파이프라인 컨텍스트 (diagnosis_codes 해석·조치 근거)
+
+리포트의 "권장 조치" 항목은 아래 검색 파이프라인을 기반으로 작성하세요.
+
+### 1. 검색 처리 흐름 (SearchProductsService.search_products)
+
+\`\`\`
+입력 query
+  → QueryAnalyzer.normalize()          # 텍스트 정규화 (소문자, 공백 정리)
+  → OpenSearch Analyze API             # 형태소 분석 (nori tokenizer, decompound_mode=none)
+  → TokenClassifier.classify(tokens, domain=PRODUCT)
+      ├─ _classify_tokens()            # search_keywords 테이블에서 토큰 매칭
+      ├─ _expand_keywords()            # SAME 동의어 확장 (search_keyword_relations WHERE relation_type='SAME')
+      └─ _classify_for_product()
+          ├─ BRAND  발골 → extracted_brands  (search_brand_keywords)
+          ├─ COLOR  발골 → extracted_colors  (search_color_keywords)
+          └─ CATEGORY 발골 → extracted_category (search_category_keywords)
+  → 발골 결과 전부 없음 → 즉시 빈 결과 반환  ← ZERO_UNRECOGNIZED 발생 지점
+  → _search_with_fallback()
+      ├─ Tier 1: 원본 + SAME 동의어만 검색
+      │    → 결과 > 0 이면 반환
+      └─ Tier 2 (Tier 1 = 0건): 원본 + SAME + SIMILAR 동의어 포함 검색
+\`\`\`
+
+### 2. OpenSearch 쿼리 구조 (_build_query)
+
+| 입력 | 쿼리 형태 | 효과 |
+|------|---------|------|
+| extracted_brands (발골사전) | must: {"terms": {"brand.id": [...]}} | 브랜드 ID로 필터링 (정밀) |
+| extracted_colors (발골사전) | must: {"terms": {"color.id": [...]}} | 색상 ID로 필터링 |
+| extracted_category (발골사전) | must: {"term/terms": {"product_type"/"product_midtype.id"}} | 카테고리 필터링 |
+| BRAND/COLOR/CATEGORY 키워드 (발골사전 없을 때) | must: 엔티티별 필터 | 키워드 기반 필터 |
+| unmatched 토큰 | should + minimum_should_match:1 | 관련성 스코어 (min_score:0.3) |
+| is_sold_out | ❌ 필터 없음 | 품절 상품 상위 노출 가능 |
+
+### 3. diagnosis_codes → 실제 원인 및 수정 대상
+
+| code | 파이프라인상 발생 위치 | 근본 원인 | 수정 대상 테이블 |
+|------|-------------------|---------|--------------|
+| ZERO_UNRECOGNIZED | TokenClassifier.classify 후 발골 결과 전부 없음 | search_keywords에 없음 → 발골 사전 미등록 | search_keywords INSERT |
+| ZERO_NO_MATCH | Tier 1 & Tier 2 모두 0건 | search_keywords에 있지만 매칭 상품 없음 | search_keyword_relations SAME/SIMILAR 추가 |
+| ETC_TYPE | _classify_tokens → keyword_type=ETC | BRAND/CATEGORY/COLOR로 분류 안 됨 → must 필터 없음 | keyword_type UPDATE + 발골 사전 INSERT |
+| NO_SYNONYM | _expand_keywords → SAME 0건 | SAME 관계 없음 → 동의어 확장 없이 원본만 | search_keyword_relations INSERT (SAME) |
+| POSSIBLE_FALLBACK | _classify_for_product → extracted 없음 | 발골사전 미등록 → should 쿼리만 | search_category_keywords or search_brand_keywords INSERT |
+| BRAND_MAPPING_WRONG | extracted_brands → brand.id 필터 실행 | search_brand_keywords.brand_id 잘못 등록 | search_brand_keywords brand_id UPDATE |
+| CATEGORY_MAPPING_WRONG | extracted_category → 필터 실행 | product_type or product_midtype_ids 불일치 | search_category_keywords 값 UPDATE |
+| LOW_RELEVANCE | unmatched should 쿼리 실행 | nori decompound_mode=none, 쿼리 토크나이징 주석 | OpenSearch 설정 검토 (코드 수정 필요) |
+| POOR_RANKING | 결과는 있으나 상위 노출 저하 | ranking 로직 문제 | search_keyword_rankings 검토 |
+| SOLDOUT_EXPOSED | is_sold_out 필터 없음 | OpenSearch 쿼리 설계 | must_not: {"term": {"is_sold_out": true}} 추가 |
+
+### 4. Fallback 동작 요약
+
+- **Tier 1 = 원본 + SAME**만 사용 → SAME 관계가 없으면 확장 없이 단순 검색
+- **Tier 2 = Tier 1이 0건일 때만** 발동 → SIMILAR 관계가 없으면 Tier 2도 0건
+- **POSSIBLE_FALLBACK**: 발골사전 미등록 → should 쿼리만 → 결과가 광범위 (total_count > 2000)
+- **category 우선순위**: BRAND와 CATEGORY 동시 발골 시 CATEGORY 우선 적용 (브랜드 필터 제거)
+
+---
+
+### 1. search-quality-report.md (요약 리포트)
+
+\`\`\`markdown
+# 검색 품질 QA 리포트 (v3) — ${FEATURE}
+평가일: {날짜} | 키워드: {N}개 | API: GET /api/v1/search/product-results?page=1&limit=50&query={kw}
+점수 체계: v2 (100점 / 6항목: 결과존재성10+검색범위적절성15+의도파악정확도20+결과관련성30+상위노출품질20+품절노출5)
+
+## 0. 세그먼트 요약
+| 세그먼트 | 건수 | 비율 | 설명 |
+|---------|------|------|------|
+| GENERAL | N | N% | 정상 검색 결과 |
+| POSSIBLE_FALLBACK | N | N% | 엔터티 발골 실패 의심 |
+| ZERO_RESULT | N | N% | 결과 0건 (UNRECOGNIZED: N / NO_MATCH: N) |
+
+## 1. GENERAL + POSSIBLE_FALLBACK 품질 지표
+평균 점수: N/100
+| 지표 | 값 |
+|-----|-----|
+| 결과 관련성 비율 (평균) | N% |
+| 의도 파악 80%+ 키워드 | N개 (N%) |
+| 품절 상품 30% 초과 키워드 | N개 (N%) |
+
+## 2. 등급 분포 (GENERAL + POSSIBLE_FALLBACK)
+A / B / C / D / F 건수·비율·ASCII 막대
+
+## 3. ZERO_RESULT 키워드 목록 (N건)
+| 키워드 | 하위 분류 | 진단 |
+ZERO_UNRECOGNIZED와 ZERO_NO_MATCH를 구분하여 나열
+
+## 4. POSSIBLE_FALLBACK 키워드 목록 (N건)
+| 키워드 | total_count | 점수 | 등급 |
+
+## 5. OpenSearch 파이프라인 시나리오 분포
+
+### 5-1. 시나리오별 건수
+
+| 시나리오 | 건수 | 비율 | 의미 |
+|---------|------|------|------|
+| A.정밀_필터 (브랜드/카테고리/복합) | N | N% | 발골사전 성공 → must 필터 |
+| A2.정밀_필터_Tier2 | N | N% | 발골 성공 but Tier1=0건 → SIMILAR 폴백 |
+| B.색상_필터 | N | N% | COLOR 발골 → color.id must 필터 |
+| C.텍스트_검색 | N | N% | 발골 실패 → should 쿼리 (POSSIBLE_FALLBACK) |
+| D1.ZERO_미등록 | N | N% | 사전 미등록 → 즉시 0건 반환 |
+| D2.ZERO_매칭없음 | N | N% | 발골 성공 but 매칭 상품 없음 |
+| 기타 | N | N% | — |
+
+### 5-2. 시나리오별 평균 점수 & 등급 분포
+
+각 시나리오(ZERO 제외)에 대해:
+| 시나리오 | 평균 점수 | A | B | C | D | F |
+
+### 5-3. 시나리오별 주요 키워드 샘플 (각 최대 5개)
+
+각 시나리오 그룹에서 score 기준 하위 키워드 5개를 나열하여
+어떤 키워드가 어떤 검색 경로를 타고 있는지 파악할 수 있도록 합니다.
+
+format:
+**A.정밀_필터_브랜드** (N건 / 평균 N점)
+예: 나이키운동화(72), 아디다스후드티(68), ...
+
+**C.텍스트_검색** (N건 / 평균 N점)
+예: 에코백(34), 크로스백(41), ...
+
+**D1.ZERO_미등록** (N건)
+예: 알파카케이시, 페이즐리블라우스, ...
+
+## 6. 핵심 문제 진단 (diagnosis_codes 기준)
+diagnosis_codes 코드별 건수 내림차순 + 권장 조치 + 예시 키워드 3개
+
+## 7. 개선 우선순위 로드맵
+| 우선순위 | diagnosis_code | 영향 키워드 수 | 난이도 | 예상 효과 |
+
+## 8. 수정 계획 요약 (keyword_fixer 결과)
+⚠️ fix_preview.md 파일 (Read 툴로 읽으세요): ${FLAG_DIR}/fix_preview.md
+(파일이 없으면 "keyword_fixer 미실행 — fix_preview.md 없음" 으로 표시)
+
+| fix_type | 키워드 수 | 우선순위 | 예상 효과 |
+|---------|---------|---------|---------|
+| INSERT_KEYWORD | N | HIGH | ZERO_UNRECOGNIZED → 검색 가능 |
+| ADD_SYNONYM | N | MEDIUM | 동의어 확장으로 Tier 1 결과 다양화 |
+| FIX_KEYWORD_TYPE | N | MEDIUM | ETC→BRAND/CATEGORY → 정확 필터 |
+| ADD_SIMILAR | N | LOW | Tier 2 폴백 활성화 |
+| FIX_CATEGORY_MAPPING | N | MEDIUM | POSSIBLE_FALLBACK 해소 |
+| FIX_BRAND_MAPPING | N | MEDIUM | 브랜드 정확도 개선 |
+| NOT_FIXABLE | N | — | 코드 수정 필요 (sq-v3 범위 외) |
+(수정이 적용되면 ZERO_RESULT N건 → 0건으로 개선 예상 등의 효과 요약 추가)
+
+## 9. 생성된 SQL 미리보기
+⚠️ 아래 SQL은 read-only 계정으로는 실행 불가합니다.
+   write 권한 확보 후 impact_analysis.md 검토 후 적용하세요.
+SQL 파일: ${FLAG_DIR}/fix_search_keywords.sql
+
+(fix_search_keywords.sql 파일을 Read 툴로 읽어 처음 30줄만 표시)
+(파일이 없으면 "keyword_fixer 미실행 — fix_search_keywords.sql 없음" 으로 표시)
+\`\`\`
+
+---
+
+### 2. search-quality-detail.md (상세)
+
+전체 키워드를 segment 섹션별로 분리해서 아래 테이블 형식으로 작성:
+| 키워드 | source | 결과수 | total_count | 점수 | 등급 | 관련성 | 의도파악 | 상위노출 | 품절율 | query_type | pipeline_scenario | diagnosis_codes | fix_type | fix_priority |
+
+---
+
+### 3. search-quality-detail.csv (CSV 전체)
+
+헤더 (v3):
+keyword,source,segment,result_count,total_count,score,grade,breakdown_결과존재성,breakdown_검색범위적절성,breakdown_의도파악정확도,breakdown_결과관련성,breakdown_상위노출품질,breakdown_품절노출,relevance_ratio,soldout_rate,in_keyword_dict,keyword_type,has_category,has_brand,has_color,same_relation_count,similar_relation_count,query_type,pipeline_scenario,diagnosis_codes,diagnosis,fixable,fix_type,fix_priority
+
+전체 키워드, 헤더 포함. diagnosis_codes는 세미콜론(;)으로 구분하여 단일 셀에 기록.
+
+---
+
+저장 경로: ${SQ_OUTPUT_DIR}/
+3개 파일 모두 ${SQ_OUTPUT_DIR}/ 에 저장하세요.
+
+작업 완료 후 반드시 실행: touch ${DONE_FILE}
+REPORTERPROMPT
+
+echo "📝 reporter-v3 시작..."
+claude -p "$(cat "${PROMPT_FILE}")" --allowedTools "Read,Write,Edit,Bash,Glob,Grep" --dangerously-skip-permissions

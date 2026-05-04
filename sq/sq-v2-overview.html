@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sq-v2 개요 — 검색 품질 측정·진단 워크플로</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --accent: #4f46e5;
+    --accent-bg: #eef2ff;
+    --accent-border: #c7d2fe;
+    --header-h: 96px;
+  }
+
+  body { font-family: 'Noto Sans KR', sans-serif; background: var(--bg); color: var(--text-primary); line-height: 1.7; }
+
+  /* ── 헤더 ── */
+  .site-header { position: sticky; top: 0; z-index: 100; background: #fff; box-shadow: 0 1px 0 var(--border); }
+  .top-nav { padding: 0 48px; height: 56px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #f3f4f6; }
+  .nav-left { display: flex; align-items: center; gap: 4px; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
+  .nav-logo span { color: #0891b2; }
+  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
+  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
+  .nav-link.active { background: var(--accent-bg); color: var(--accent); }
+  .nav-badge { font-size: 11px; font-weight: 600; background: var(--accent-bg); color: var(--accent); padding: 3px 10px; border-radius: 20px; }
+  .breadcrumb { padding: 9px 48px; display: flex; align-items: center; gap: 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); }
+  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
+  .breadcrumb a:hover { color: var(--accent); }
+  .bc-sep { color: #d1d5db; margin: 0 2px; }
+  .bc-current { color: var(--text-primary); font-weight: 500; }
+
+  /* ── 레이아웃 ── */
+  .layout { display: flex; min-height: calc(100vh - var(--header-h)); }
+  .sidebar { width: 240px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border); padding: 24px 0; position: sticky; top: var(--header-h); height: calc(100vh - var(--header-h)); overflow-y: auto; }
+  .sidebar-logo { padding: 0 24px 20px; border-bottom: 1px solid var(--border); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+  .logo-icon { font-size: 22px; line-height: 1; }
+  .logo-title { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .logo-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .nav-section-title { padding: 6px 24px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-top: 8px; }
+  .nav-item { display: block; padding: 8px 24px; font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; border-left: 3px solid transparent; transition: all 0.15s; }
+  .nav-item:hover { color: var(--accent); background: var(--accent-bg); border-left-color: var(--accent); }
+  .main { flex: 1; padding: 28px 36px 56px; max-width: 900px; }
+
+  /* ── 페이지 헤더 ── */
+  .page-header { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid var(--border); }
+  .page-header h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; color: var(--text-primary); }
+  .page-header .subtitle { margin-top: 8px; font-size: 16px; color: var(--text-secondary); }
+  .page-header .meta { margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .meta-badge { font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 20px; background: var(--accent-bg); color: var(--accent); }
+
+  /* ── 카드 ── */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+  .card-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .card-title span { color: var(--text-muted); font-size: 13px; font-weight: 400; }
+
+  /* ── 섹션 ── */
+  .section { margin-bottom: 36px; }
+  .section-header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  .section-num { width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: white; font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .section-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+  h3 { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 20px 0 10px; }
+  p { font-size: 14px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 10px; }
+
+  /* ── 버전 비교 그리드 ── */
+  .version-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+  .version-card { border-radius: 10px; padding: 18px; border: 1px solid var(--border); }
+  .vc-v1 { background: #ecfeff; border-color: #a5f3fc; }
+  .vc-v2 { background: var(--accent-bg); border-color: var(--accent-border); border-width: 2px; }
+  .vc-v3 { background: #fdf4ff; border-color: #e9d5ff; }
+  .vc-badge { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; display: inline-block; margin-bottom: 8px; }
+  .vc-v1 .vc-badge { background: #0891b2; color: white; }
+  .vc-v2 .vc-badge { background: var(--accent); color: white; }
+  .vc-v3 .vc-badge { background: #7c3aed; color: white; }
+  .vc-title { font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+  .vc-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .vc-current { position: relative; }
+  .vc-current::after { content: '현재'; position: absolute; top: -8px; right: -8px; font-size: 10px; font-weight: 700; background: var(--accent); color: white; padding: 2px 7px; border-radius: 10px; }
+
+  /* ── 플로우 ── */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .flow-step { display: flex; gap: 16px; align-items: flex-start; padding: 16px; background: #fff; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
+  .step-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .step-icon.si-a { background: #eff6ff; }
+  .step-icon.si-b { background: #f0fdf4; }
+  .step-icon.si-c { background: #fffbeb; }
+  .step-body { flex: 1; }
+  .step-name { font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+  .step-desc { font-size: 13px; color: var(--text-secondary); }
+  .step-tags { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+  .t-blue   { background: #eff6ff; color: #2563eb; }
+  .t-green  { background: #f0fdf4; color: #16a34a; }
+  .t-amber  { background: #fffbeb; color: #d97706; }
+  .t-indigo { background: var(--accent-bg); color: var(--accent); }
+  .t-gray   { background: #f3f4f6; color: #6b7280; }
+  .t-opt    { background: #f9fafb; color: #9ca3af; border: 1px solid #e5e7eb; }
+
+  /* ── 에이전트 그리드 ── */
+  .agent-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .agent-card { background: #f9fafb; border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .ac-wave { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; margin-bottom: 8px; display: inline-block; }
+  .aw-a { background: #dbeafe; color: #1d4ed8; }
+  .aw-b { background: #d1fae5; color: #065f46; }
+  .aw-c { background: #fef3c7; color: #92400e; }
+  .ac-name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+  .ac-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .ac-opt { opacity: 0.6; }
+  .ac-new { border-color: var(--accent-border); background: var(--accent-bg); }
+
+  /* ── 채점 바 ── */
+  .score-table { display: flex; flex-direction: column; gap: 10px; }
+  .score-row { display: flex; align-items: center; gap: 12px; }
+  .score-label { font-size: 13px; font-weight: 600; color: var(--text-primary); width: 160px; flex-shrink: 0; }
+  .score-bar-wrap { flex: 1; background: #f3f4f6; border-radius: 4px; height: 8px; }
+  .score-bar { height: 8px; border-radius: 4px; background: var(--accent); }
+  .score-pts { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: var(--accent); width: 36px; text-align: right; flex-shrink: 0; }
+  .score-note { font-size: 11px; color: var(--text-muted); width: 200px; flex-shrink: 0; }
+
+  /* ── 진단 코드 ── */
+  .diag-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .diag-item { background: #f9fafb; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .diag-code { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  .diag-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .diag-fix { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .dc-zero   .diag-code { color: #dc2626; }
+  .dc-etc    .diag-code { color: #d97706; }
+  .dc-syn    .diag-code { color: #2563eb; }
+  .dc-fb     .diag-code { color: #7c3aed; }
+  .dc-norm   .diag-code { color: #16a34a; }
+
+  /* ── 비교 테이블 ── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+  th { text-align: left; padding: 10px 14px; background: #f9fafb; border: 1px solid var(--border); font-weight: 600; color: var(--text-secondary); font-size: 12px; }
+  td { padding: 10px 14px; border: 1px solid var(--border); color: var(--text-secondary); vertical-align: top; }
+  tr:hover td { background: #fafafa; }
+  td.good { color: #16a34a; font-weight: 600; }
+  td.bad  { color: #dc2626; }
+  td.new  { color: var(--accent); font-weight: 600; }
+
+  /* ── 산출물 그리드 ── */
+  .output-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .output-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .oc-icon { font-size: 20px; margin-bottom: 8px; }
+  .oc-name { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+  .oc-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+  /* ── 게이트 체크 ── */
+  .gate-list { display: flex; flex-direction: column; gap: 8px; }
+  .gate-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; background: #fff; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+  .gate-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .gate-body { flex: 1; color: var(--text-secondary); }
+  .gate-body strong { color: var(--text-primary); }
+
+  /* ── 코드 ── */
+  .code-block { background: #1e2030; border-radius: 10px; overflow: hidden; margin: 12px 0; }
+  .code-header { background: #2a2d3e; padding: 8px 16px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #c4b5fd; font-weight: 500; }
+  .code-body { padding: 14px 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #a9b1d6; line-height: 1.7; white-space: pre-wrap; }
+  .code-body .cm { color: #565f89; }
+  .code-body .cv { color: #7aa2f7; }
+  .code-body .cs { color: #9ece6a; }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: var(--accent-bg); color: var(--accent); padding: 2px 6px; border-radius: 4px; }
+
+  /* ── 알림 ── */
+  .notice { border-radius: 10px; padding: 14px 18px; font-size: 13px; margin: 14px 0; display: flex; gap: 10px; align-items: flex-start; }
+  .notice-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .notice-text { color: var(--text-secondary); line-height: 1.6; }
+  .notice-title { font-weight: 700; margin-bottom: 4px; }
+  .notice.info   { background: var(--accent-bg); border: 1px solid var(--accent-border); }
+  .notice.tip    { background: #f0fdf4; border: 1px solid #bbf7d0; }
+
+  /* ── 구분선 / 푸터 ── */
+  .divider { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+  .site-footer { text-align: center; padding: 28px; font-size: 13px; color: var(--text-muted); border-top: 1px solid var(--border); background: #fff; }
+  .site-footer a { color: var(--accent); text-decoration: none; }
+
+  @media (max-width: 768px) {
+    .top-nav, .breadcrumb { padding-left: 20px; padding-right: 20px; }
+    .sidebar { display: none; }
+    .main { padding: 24px 20px; }
+    .version-grid, .agent-grid, .output-grid, .diag-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <nav class="top-nav">
+    <div class="nav-left">
+      <a href="../index.html" class="nav-logo">~/<span>tmux</span></a>
+      <div class="nav-divider"></div>
+      <a href="sq-overview.html" class="nav-link">sq</a>
+      <a href="sq-v2-overview.html" class="nav-link active">sq-v2</a>
+      <a href="sq-v3-overview.html" class="nav-link">sq-v3</a>
+    </div>
+    <span class="nav-badge">Search Quality v2</span>
+  </nav>
+  <div class="breadcrumb">
+    <a href="../index.html">~/tmux</a>
+    <span class="bc-sep">/</span>
+    <a href="sq-v2-overview.html">sq-v2</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">개요</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">📊</div>
+      <div>
+        <div class="logo-title">sq-v2</div>
+        <div class="logo-sub">개요</div>
+      </div>
+    </div>
+    <div class="nav-section-title">비교</div>
+    <a href="#s-compare" class="nav-item">버전 비교</a>
+    <div class="nav-section-title">구조</div>
+    <a href="#s-flow" class="nav-item">실행 흐름</a>
+    <a href="#s-agents" class="nav-item">에이전트 구성</a>
+    <div class="nav-section-title">채점</div>
+    <a href="#s-score" class="nav-item">채점 체계</a>
+    <a href="#s-v1diff" class="nav-item">v1 대비 변경</a>
+    <a href="#s-diag" class="nav-item">진단 코드</a>
+    <div class="nav-section-title">결과</div>
+    <a href="#s-output" class="nav-item">산출물</a>
+    <a href="#s-gate" class="nav-item">게이트 체크</a>
+  </nav>
+
+  <main class="main">
+
+    <div class="page-header">
+      <h1>📊 sq-v2</h1>
+      <p class="subtitle">검색 품질을 측정·진단하는 평가 워크플로 — v1 채점 오류를 수정하고 백엔드 실제 로직을 정확히 반영</p>
+      <div class="meta">
+        <span class="meta-badge">품질 측정</span>
+        <span class="meta-badge">진단 코드</span>
+        <span class="meta-badge">3-Wave</span>
+        <span class="meta-badge">500 키워드</span>
+      </div>
+    </div>
+
+    <!-- 버전 비교 -->
+    <div class="section" id="s-compare">
+      <div class="section-header">
+        <div class="section-num">0</div>
+        <div class="section-title">버전 비교</div>
+      </div>
+
+      <div class="version-grid">
+        <div class="version-card vc-v1">
+          <span class="vc-badge">sq (v1)</span>
+          <div class="vc-title">코드 수정</div>
+          <div class="vc-desc">OpenSearch DSL·API 코드를 직접 수정하는 개발 워크플로. 코드 변경 + PR 생성.</div>
+        </div>
+        <div class="version-card vc-v2 vc-current">
+          <span class="vc-badge">sq-v2</span>
+          <div class="vc-title">품질 측정</div>
+          <div class="vc-desc">검색 품질을 측정·진단하는 평가 워크플로. 백엔드 로직을 정확히 반영한 채점 체계.</div>
+        </div>
+        <div class="version-card vc-v3">
+          <span class="vc-badge">sq-v3</span>
+          <div class="vc-title">데이터 수정</div>
+          <div class="vc-desc">search_keywords 관련 테이블을 수정하는 개선 워크플로. SQL 파일 생성 + 검토 후 적용.</div>
+        </div>
+      </div>
+
+      <div class="notice info">
+        <div class="notice-icon">💡</div>
+        <div class="notice-text">
+          <div class="notice-title">권장 사용 순서</div>
+          <strong>sq-v2로 품질 현황 측정 → sq-v3로 데이터 수정 → sq-v2로 재측정</strong>. sq-v2는 측정 도구이고, sq-v3는 수정 도구입니다.
+        </div>
+      </div>
+    </div>
+
+    <!-- 실행 흐름 -->
+    <div class="section" id="s-flow">
+      <div class="section-header">
+        <div class="section-num">1</div>
+        <div class="section-title">실행 흐름</div>
+      </div>
+
+      <div class="flow">
+        <div class="flow-step">
+          <div class="step-icon si-a">🏃</div>
+          <div class="step-body">
+            <div class="step-name">Wave A — runner (병렬)</div>
+            <div class="step-desc">키워드 500개 수집(웹서칭 250 + DB 250) 및 검색 API 배치 호출. opensearch·api 에이전트는 선택 실행.</div>
+            <div class="step-tags">
+              <span class="tag t-blue">runner</span>
+              <span class="tag t-opt">opensearch (선택)</span>
+              <span class="tag t-opt">api (선택)</span>
+            </div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-icon si-b">📈</div>
+          <div class="step-body">
+            <div class="step-name">Wave B — scorer</div>
+            <div class="step-desc">results/*.json을 v2 채점 체계로 채점. POSSIBLE_FALLBACK·diagnosis_codes·query_type 필드 생성.</div>
+            <div class="step-tags">
+              <span class="tag t-green">scorer</span>
+              <span class="tag t-indigo">diagnosis_codes 배열</span>
+              <span class="tag t-indigo">query_type A/B/C/D/E</span>
+            </div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="step-icon si-c">📝</div>
+          <div class="step-body">
+            <div class="step-name">Wave C — reporter</div>
+            <div class="step-desc">scores.json을 집계해 리포트 3종 생성. 백엔드 알고리즘 컨텍스트·diagnosis_codes 수정 대상 테이블 매핑 포함.</div>
+            <div class="step-tags">
+              <span class="tag t-amber">reporter-v2</span>
+              <span class="tag t-indigo">백엔드 컨텍스트 추가</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 에이전트 구성 -->
+    <div class="section" id="s-agents">
+      <div class="section-header">
+        <div class="section-num">2</div>
+        <div class="section-title">에이전트 구성</div>
+      </div>
+
+      <div class="agent-grid">
+        <div class="agent-card">
+          <div class="ac-wave aw-a">Wave A</div>
+          <div class="ac-name">runner</div>
+          <div class="ac-desc">키워드 500개 수집 (웹서칭 250 + DB rank 상위 250) + 검색 API 배치 실행 → results/*.json</div>
+        </div>
+        <div class="agent-card ac-opt">
+          <div class="ac-wave aw-a">Wave A (선택)</div>
+          <div class="ac-name">opensearch</div>
+          <div class="ac-desc">OpenSearch 쿼리 DSL 수정. sq-v2에서는 품질 측정 목적이면 생략 가능.</div>
+        </div>
+        <div class="agent-card ac-opt">
+          <div class="ac-wave aw-a">Wave A (선택)</div>
+          <div class="ac-name">api</div>
+          <div class="ac-desc">API 파라미터 수정. sq-v2에서는 품질 측정 목적이면 생략 가능.</div>
+        </div>
+        <div class="agent-card ac-new" style="grid-column: span 2;">
+          <div class="ac-wave aw-b">Wave B</div>
+          <div class="ac-name">scorer ★ v2 개편</div>
+          <div class="ac-desc">POSSIBLE_FALLBACK(F강제 폐기), diagnosis_codes 배열, ZERO 세분화(UNRECOGNIZED/NO_MATCH), query_type 유형 분류(A/B/C/D/E), 관련성 LLM 독립 평가</div>
+        </div>
+        <div class="agent-card ac-new">
+          <div class="ac-wave aw-c">Wave C</div>
+          <div class="ac-name">reporter ★ v2 개편</div>
+          <div class="ac-desc">백엔드 알고리즘 컨텍스트 + diagnosis_codes → 수정 대상 테이블 매핑 추가</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 채점 체계 -->
+    <div class="section" id="s-score">
+      <div class="section-header">
+        <div class="section-num">3</div>
+        <div class="section-title">채점 체계</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">점수 항목 <span>합계 100점</span></div>
+        <div class="score-table">
+          <div class="score-row">
+            <div class="score-label">결과 존재성</div>
+            <div class="score-bar-wrap"><div class="score-bar" style="width:10%"></div></div>
+            <div class="score-pts">10pt</div>
+            <div class="score-note">result_count > 0 여부</div>
+          </div>
+          <div class="score-row">
+            <div class="score-label">검색 범위 적절성</div>
+            <div class="score-bar-wrap"><div class="score-bar" style="width:15%"></div></div>
+            <div class="score-pts">15pt</div>
+            <div class="score-note">발골 성공 + total_count 범위</div>
+          </div>
+          <div class="score-row">
+            <div class="score-label">의도 파악 정확도</div>
+            <div class="score-bar-wrap"><div class="score-bar" style="width:20%"></div></div>
+            <div class="score-pts">20pt</div>
+            <div class="score-note">유형 A/B/C/D/E별 독립 평가</div>
+          </div>
+          <div class="score-row">
+            <div class="score-label">결과 관련성</div>
+            <div class="score-bar-wrap"><div class="score-bar" style="width:30%"></div></div>
+            <div class="score-pts">30pt</div>
+            <div class="score-note">LLM 독립 평가 (Y/N)</div>
+          </div>
+          <div class="score-row">
+            <div class="score-label">상위 노출 품질</div>
+            <div class="score-bar-wrap"><div class="score-bar" style="width:20%"></div></div>
+            <div class="score-pts">20pt</div>
+            <div class="score-note">관련 상품의 최상위 노출 순위</div>
+          </div>
+          <div class="score-row">
+            <div class="score-label">품절 상품 노출</div>
+            <div class="score-bar-wrap"><div class="score-bar" style="width:5%"></div></div>
+            <div class="score-pts">5pt</div>
+            <div class="score-note">soldout_rate</div>
+          </div>
+        </div>
+      </div>
+
+      <h3>등급 기준</h3>
+      <table>
+        <thead><tr><th>등급</th><th>점수 범위</th><th>의미</th></tr></thead>
+        <tbody>
+          <tr><td><strong style="color:#16a34a">A</strong></td><td>85~100점</td><td>우수 — 검색 품질 양호</td></tr>
+          <tr><td><strong style="color:#2563eb">B</strong></td><td>70~84점</td><td>양호 — 소폭 개선 여지</td></tr>
+          <tr><td><strong style="color:#d97706">C</strong></td><td>50~69점</td><td>보통 — 개선 필요</td></tr>
+          <tr><td><strong style="color:#ea580c">D</strong></td><td>30~49점</td><td>미흡 — 우선 개선 대상</td></tr>
+          <tr><td><strong style="color:#dc2626">F</strong></td><td>0~29점</td><td>불량 — 즉시 수정 필요</td></tr>
+        </tbody>
+      </table>
+
+      <h3>query_type 유형 분류 (의도 파악 정확도 채점 기준)</h3>
+      <table>
+        <thead><tr><th>유형</th><th>조건</th><th>채점 방식</th></tr></thead>
+        <tbody>
+          <tr><td><code>A</code> 브랜드</td><td>extracted_brands 있음, categories 없거나 충돌로 제거</td><td>브랜드 상품 커버리지로 채점</td></tr>
+          <tr><td><code>B</code> 카테고리</td><td>extracted_categories 있음 (브랜드와 충돌 시 카테고리 우선)</td><td>카테고리 상품 커버리지로 채점</td></tr>
+          <tr><td><code>C</code> 색상</td><td>extracted_colors만 있음</td><td>색상 상품 커버리지로 채점</td></tr>
+          <tr><td><code>D</code> 복합</td><td>여러 타입 공존</td><td>복합 커버리지로 채점</td></tr>
+          <tr><td><code>E</code> ETC</td><td>extracted 모두 없음</td><td><strong>0점</strong> + ETC_TYPE 진단</td></tr>
+        </tbody>
+      </table>
+
+      <h3>segment 분류</h3>
+      <table>
+        <thead><tr><th>segment</th><th>조건</th><th>평균 점수 포함</th></tr></thead>
+        <tbody>
+          <tr><td><code>GENERAL</code></td><td>정상 결과</td><td>✅ 포함</td></tr>
+          <tr><td><code>POSSIBLE_FALLBACK</code></td><td>extracted 없음 + total_count > 2000</td><td>✅ 포함 (v1과 달리 채점 계속)</td></tr>
+          <tr><td><code>ZERO_RESULT</code></td><td>result_count = 0</td><td>❌ 제외</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- v1 대비 변경 -->
+    <div class="section" id="s-v1diff">
+      <div class="section-header">
+        <div class="section-num">4</div>
+        <div class="section-title">v1 대비 주요 변경</div>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>항목</th><th>sq v1 (기존)</th><th>sq-v2 (수정)</th><th>이유</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>FALLBACK 처리</strong></td>
+            <td class="bad">total_count > 1000 → F등급 강제</td>
+            <td class="good">POSSIBLE_FALLBACK 표시 후 채점 계속</td>
+            <td>백엔드 Tier 2는 result_count=0일 때만 발동. total_count>1000 기준은 코드 어디에도 없음</td>
+          </tr>
+          <tr>
+            <td><strong>브랜드+카테고리 충돌</strong></td>
+            <td class="bad">이중 의도로 양쪽 모두 채점</td>
+            <td class="good">카테고리 우선 처리 (유형 B)</td>
+            <td>token_classifier.py가 충돌 시 카테고리 우선, 브랜드 제거</td>
+          </tr>
+          <tr>
+            <td><strong>브랜드 관련성</strong></td>
+            <td class="bad">extracted_brands 있으면 자동 관련성 1.0</td>
+            <td class="good">LLM이 각 상품 독립 Y/N 판단</td>
+            <td>발골 성공 ≠ 관련성 만점. 브랜드 필터 내 품질 차이가 숨겨짐</td>
+          </tr>
+          <tr>
+            <td><strong>ZERO_RESULT</strong></td>
+            <td class="bad">단일 ZERO_RESULT로 통합</td>
+            <td class="good">ZERO_UNRECOGNIZED / ZERO_NO_MATCH 구분</td>
+            <td>수정 방향이 완전히 다름. 미등록 키워드 vs 매핑 문제</td>
+          </tr>
+          <tr>
+            <td><strong>진단 필드</strong></td>
+            <td class="bad">diagnosis 단일 문자열</td>
+            <td class="good">diagnosis_codes 배열 + diagnosis 서술</td>
+            <td>복합 진단 가능, sq-v3의 fix_type 매핑 기반</td>
+          </tr>
+          <tr>
+            <td><strong>ETC 타입 처리</strong></td>
+            <td class="bad">단일 의도로 20점 채점</td>
+            <td class="good">0점 + ETC_TYPE 진단 코드</td>
+            <td>키워드 사전에 없는 키워드는 검색 품질 측정 불가</td>
+          </tr>
+          <tr>
+            <td><strong>API 파라미터</strong></td>
+            <td class="bad">step=0&search_source=POPULAR_KEYWORD 포함</td>
+            <td class="good">page=1&limit=50만 사용</td>
+            <td>존재하지 않는 파라미터 제거</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 진단 코드 -->
+    <div class="section" id="s-diag">
+      <div class="section-header">
+        <div class="section-num">5</div>
+        <div class="section-title">진단 코드 (diagnosis_codes)</div>
+      </div>
+
+      <p>scores.json 각 항목에 배열로 포함됩니다. sq-v3의 fix_type 결정에도 직접 사용됩니다.</p>
+
+      <div class="diag-grid">
+        <div class="diag-item dc-zero">
+          <div class="diag-code">ZERO_UNRECOGNIZED</div>
+          <div class="diag-desc">extracted_* 모두 비어있음. 키워드가 search_keywords 사전에 미등록.</div>
+          <div class="diag-fix">→ sq-v3: INSERT_KEYWORD</div>
+        </div>
+        <div class="diag-item dc-zero">
+          <div class="diag-code">ZERO_NO_MATCH</div>
+          <div class="diag-desc">extracted_* 있었지만 결과 0건. 엔터티 발골 성공했으나 매칭 상품 없음.</div>
+          <div class="diag-fix">→ sq-v3: ADD_SYNONYM / FIX_BRAND_MAPPING</div>
+        </div>
+        <div class="diag-item dc-etc">
+          <div class="diag-code">ETC_TYPE</div>
+          <div class="diag-desc">keyword_type이 ETC. 카테고리나 브랜드로 분류되지 않아 must 필터 미적용.</div>
+          <div class="diag-fix">→ sq-v3: FIX_KEYWORD_TYPE</div>
+        </div>
+        <div class="diag-item dc-syn">
+          <div class="diag-code">NO_SYNONYM</div>
+          <div class="diag-desc">SAME 관계 0건. Tier 1 결과가 단일 키워드에만 의존.</div>
+          <div class="diag-fix">→ sq-v3: ADD_SYNONYM</div>
+        </div>
+        <div class="diag-item dc-fb">
+          <div class="diag-code">POSSIBLE_FALLBACK</div>
+          <div class="diag-desc">extracted 없음 + total_count > 2000. Tier 2 fallback 의심 (v1의 FALLBACK과 다름 — 채점 계속).</div>
+          <div class="diag-fix">→ sq-v3: INSERT_KEYWORD 또는 조사 필요</div>
+        </div>
+        <div class="diag-item dc-norm">
+          <div class="diag-code">BRAND_MAPPING_WRONG</div>
+          <div class="diag-desc">브랜드로 발골되었으나 상품이 해당 브랜드 소속이 아님. 브랜드 매핑 오류 의심.</div>
+          <div class="diag-fix">→ sq-v3: FIX_BRAND_MAPPING</div>
+        </div>
+        <div class="diag-item dc-norm">
+          <div class="diag-code">CATEGORY_MAPPING_WRONG</div>
+          <div class="diag-desc">카테고리로 발골되었으나 결과 상품의 카테고리 불일치.</div>
+          <div class="diag-fix">→ sq-v3: FIX_CATEGORY_MAPPING</div>
+        </div>
+        <div class="diag-item dc-syn">
+          <div class="diag-code">LOW_SIMILAR</div>
+          <div class="diag-desc">SIMILAR 관계 0건 또는 부족. Tier 2 결과 다양성 부족.</div>
+          <div class="diag-fix">→ sq-v3: ADD_SIMILAR</div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- 산출물 -->
+    <div class="section" id="s-output">
+      <div class="section-header">
+        <div class="section-num">6</div>
+        <div class="section-title">산출물</div>
+      </div>
+
+      <div class="output-grid">
+        <div class="output-card">
+          <div class="oc-icon">📄</div>
+          <div class="oc-name">scores.json</div>
+          <div class="oc-desc">전체 채점 결과. diagnosis_codes·query_type·keyword_type·has_color 필드 포함.</div>
+        </div>
+        <div class="output-card">
+          <div class="oc-icon">📊</div>
+          <div class="oc-name">search-quality-report.md</div>
+          <div class="oc-desc">경영진 요약 리포트. 평균 점수, 등급 분포, 개선 방향 포함.</div>
+        </div>
+        <div class="output-card">
+          <div class="oc-icon">📋</div>
+          <div class="oc-name">search-quality-detail.md</div>
+          <div class="oc-desc">키워드별 상세 채점 마크다운. diagnosis_codes 컬럼 포함.</div>
+        </div>
+        <div class="output-card">
+          <div class="oc-icon">📁</div>
+          <div class="oc-name">search-quality-detail.csv</div>
+          <div class="oc-desc">키워드별 상세 채점 CSV. 스프레드시트 분석용.</div>
+        </div>
+        <div class="output-card">
+          <div class="oc-icon">📈</div>
+          <div class="oc-name">impact_analysis.md</div>
+          <div class="oc-desc">변경사항 영향도 분석. 이번 실행에서 개선/악화된 키워드 목록.</div>
+        </div>
+        <div class="output-card">
+          <div class="oc-icon">🔍</div>
+          <div class="oc-name">results/*.json</div>
+          <div class="oc-desc">검색 API 응답 원본 JSON. scorer의 입력 데이터.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 게이트 체크 -->
+    <div class="section" id="s-gate">
+      <div class="section-header">
+        <div class="section-num">7</div>
+        <div class="section-title">게이트 체크</div>
+      </div>
+
+      <div class="gate-list">
+        <div class="gate-item">
+          <div class="gate-icon">✅</div>
+          <div class="gate-body"><strong>검색 결과 JSON ≥ 100개</strong> — results/ 디렉토리에 100개 이상 JSON 파일 존재</div>
+        </div>
+        <div class="gate-item">
+          <div class="gate-icon">✅</div>
+          <div class="gate-body"><strong>scores.json 존재</strong> — Wave B scorer 정상 완료</div>
+        </div>
+        <div class="gate-item">
+          <div class="gate-icon">✅</div>
+          <div class="gate-body"><strong>리포트 파일 3개 존재</strong> — report.md / detail.md / detail.csv</div>
+        </div>
+        <div class="gate-item">
+          <div class="gate-icon">ℹ️</div>
+          <div class="gate-body"><strong>F등급 0건 비율</strong> — 정보성 게이트. F등급이 많아도 실패 처리하지 않음 (현황 파악용)</div>
+        </div>
+        <div class="gate-item">
+          <div class="gate-icon">🔄</div>
+          <div class="gate-body"><strong>REWORK 조건</strong> — 게이트 실패 시 해당 Wave 재실행 (MAX_REWORK=3). 토론 REWORK 판정 시 전체 Wave 재시작</div>
+        </div>
+      </div>
+
+      <div class="code-block" style="margin-top:16px;">
+        <div class="code-header">실행 명령</div>
+        <div class="code-body"><span class="cm"># 기본값 실행 — 40~50대 남성 패션 키워드 500개 품질 평가</span>
+<span class="cv">sq-v2</span>
+
+<span class="cm"># 목적 지정 실행</span>
+<span class="cv">sq-v2</span> <span class="cs">"아우터 카테고리 키워드 품질 진단"</span>
+
+<span class="cm"># reporter 독립 실행</span>
+<span class="cv">FLAG_DIR</span>=.agent/sq2-{TIMESTAMP} \
+<span class="cv">SQ_OUTPUT_DIR</span>=docs/reports/sq2-{TIMESTAMP} \
+<span class="cv">reporter-v2</span></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<footer class="site-footer">
+  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
+  &nbsp;·&nbsp;
+  <a href="sq-v2-tutorial.html">sq-v2 튜토리얼</a>
+  &nbsp;·&nbsp;
+  <a href="sq-overview.html">sq 개요</a>
+  &nbsp;·&nbsp;
+  <a href="sq-v3-overview.html">sq-v3 개요</a>
+</footer>
+
+</body>
+</html>
