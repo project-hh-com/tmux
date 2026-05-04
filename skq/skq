@@ -7,7 +7,7 @@
 #   Wave A: Discovery    — DB 기반 개선 대상 키워드 자동 발굴
 #   Wave B: Analysis     — 각 키워드별 진단 코드 + 구체적 수정 방향 제안
 #   Wave C: Plan Debate  — 수정 방향의 도메인 적합성 토론 (Red/Blue/Judge)
-#   Wave D: Propose      — 승인된 플랜 기반 병렬 SQL 생성 (4 에이전트)
+#   Wave D: Propose      — 승인된 플랜 기반 병렬 SQL 생성 (5 에이전트)
 #   Wave E: Ship-Ready   — 최종 SQL 패키징 + 매니페스트 생성
 #   Wave F: Validate     — 예상 개선도 추정 + 리포트
 #
@@ -174,6 +174,36 @@ ORDER BY sk.rank ASC NULLS LAST
 LIMIT 30;
 \`\`\`
 
+### Q5: WRONG_PRIORITY 후보 — 검색 상위 키워드인데 priority가 기본값(100)이거나, 토큰이 겹치는 키워드 간 우선순위 역전이 의심되는 경우
+\`\`\`sql
+-- 5-A: rank 상위인데 priority가 기본값(100)인 키워드 — 중요 키워드임에도 낮은 우선순위
+SELECT sk.id, sk.keyword, sk.keyword_type, sk.priority, sk.rank,
+       skr.result_product_count
+FROM search_keywords sk
+LEFT JOIN search_keyword_rankings skr ON skr.search_keyword_id = sk.id
+WHERE sk.is_deleted = false
+  AND sk.priority = 100
+  AND sk.rank IS NOT NULL
+  AND sk.rank <= 100
+ORDER BY sk.rank ASC
+LIMIT 20;
+
+-- 5-B: 서로 토큰이 포함 관계인 키워드 쌍 (priority 충돌 위험)
+-- 예: "자라"(BRAND)와 "자라체크"(CATEGORY) — 짧은 쪽이 priority가 낮으면 긴 쪽을 덮어씀
+SELECT a.id AS id_a, a.keyword AS keyword_a, a.keyword_type AS type_a, a.priority AS priority_a, a.rank AS rank_a,
+       b.id AS id_b, b.keyword AS keyword_b, b.keyword_type AS type_b, b.priority AS priority_b, b.rank AS rank_b
+FROM search_keywords a
+JOIN search_keywords b
+  ON b.keyword LIKE '%' || a.keyword || '%'
+  AND b.id != a.id
+  AND a.is_deleted = false
+  AND b.is_deleted = false
+  AND a.priority <= b.priority     -- 짧은 키워드(a)가 긴 키워드(b)보다 우선순위가 같거나 높은 역전 케이스
+  AND length(a.keyword) < length(b.keyword)
+ORDER BY a.rank ASC NULLS LAST
+LIMIT 20;
+\`\`\`
+
 ## 출력 요구사항
 
 1. 위 4개 쿼리를 Bash 툴로 직접 실행
@@ -197,6 +227,10 @@ LIMIT 30;
   ],
   "possible_fallback": [
     {"id": 4, "keyword": "ZARA", "keyword_type": "BRAND", "rank": 8, "result_product_count": 200}
+  ],
+  "wrong_priority": [
+    {"id": 5, "keyword": "청바지", "keyword_type": "CATEGORY", "priority": 100, "rank": 3, "conflict_with": null},
+    {"id": 6, "keyword": "자라", "keyword_type": "BRAND", "priority": 50, "rank": 12, "conflict_with": {"id": 7, "keyword": "자라체크", "priority": 50}}
   ]
 }
 \`\`\`
@@ -265,6 +299,30 @@ ${DB_CONTEXT}
 | NO_SYNONYM | SAME 동의어로 연결할 기존 키워드 (DB에서 후보 탐색) |
 | POSSIBLE_FALLBACK (BRAND) | 실제 brand_id (brands 테이블 조회) |
 | POSSIBLE_FALLBACK (CATEGORY) | 실제 product_midtype_ids (product_midtypes 테이블 조회) |
+| WRONG_PRIORITY | 적절한 priority 값 (현재값 + 충돌 키워드 분석 후 결정) |
+
+### WRONG_PRIORITY 분석 기준
+
+priority는 토큰 매칭 시 가장 먼저 적용되는 정렬 키입니다 (낮을수록 먼저 매칭).
+
+**케이스 1 — rank 기반 중요도 역전:**
+rank가 낮은(검색량 많은) 키워드인데 priority=100(기본값)이면,
+덜 중요한 키워드보다 늦게 매칭될 수 있음.
+→ rank ÷ 2 를 초기 기준으로, 다른 키워드와 충돌 없는 범위에서 제안
+
+**케이스 2 — 토큰 포함 관계 충돌:**
+"자라"(priority=50) + "자라체크"(priority=50) → 동점이면 토큰 커버 수(더 많은 토큰 커버가 우선)로 해소됨.
+단, "자라"가 priority가 더 낮으면(숫자 작으면) "자라체크" 쿼리에서도 "자라"가 먼저 매칭돼 브랜드 필터로 잘못 처리됨.
+→ 구체 키워드(긴 것)의 priority를 포괄 키워드(짧은 것)보다 낮게(숫자 작게) 설정
+
+추가 조회 예시:
+\`\`\`sql
+-- 특정 키워드와 토큰 충돌 가능한 키워드들의 priority 현황
+SELECT id, keyword, keyword_type, priority, rank
+FROM search_keywords
+WHERE keyword ILIKE '%{keyword}%' AND is_deleted = false
+ORDER BY priority ASC;
+\`\`\`
 
 ### 참고 쿼리 예시
 \`\`\`sql
@@ -334,6 +392,28 @@ Wave C Debate 에이전트가 이 값의 적합성을 검토합니다.
       "proposed_brand_id": 88,
       "rationale": "ZARA 키워드가 브랜드 발골사전에 연결 안 됨. brands 테이블에서 ZARA(id=88) 확인.",
       "db_evidence": "SELECT id, name FROM brands WHERE name ILIKE '%ZARA%' → id=88, name='ZARA'"
+    },
+    {
+      "id": 5,
+      "keyword": "청바지",
+      "diagnosis_code": "WRONG_PRIORITY",
+      "fix_type": "UPDATE_PRIORITY",
+      "current_priority": 100,
+      "proposed_priority": 10,
+      "conflict_keyword": null,
+      "rationale": "rank=3으로 최상위 검색어인데 priority=100(기본값). 중요 키워드가 후순위로 밀려남.",
+      "db_evidence": "rank=3 확인. 동일 토큰 영역 충돌 키워드 없음 → priority=10 제안"
+    },
+    {
+      "id": 6,
+      "keyword": "자라",
+      "diagnosis_code": "WRONG_PRIORITY",
+      "fix_type": "UPDATE_PRIORITY",
+      "current_priority": 50,
+      "proposed_priority": 80,
+      "conflict_keyword": {"id": 7, "keyword": "자라체크", "current_priority": 50},
+      "rationale": "자라(BRAND, priority=50)와 자라체크(CATEGORY, priority=50) 동점. '자라체크' 쿼리 시 자라가 먼저 매칭돼 브랜드 필터로 잘못 처리됨. 자라의 priority를 높여(숫자 크게) 자라체크가 우선 매칭되도록.",
+      "db_evidence": "5-B 쿼리로 충돌 확인. 자라체크 단독 쿼리 시 BRAND 시나리오로 분류되는 현상"
     }
   ]
 }
@@ -408,6 +488,10 @@ ${DB_CONTEXT}
 - **파이프라인 부작용**: 이 변경이 다른 키워드나 시나리오에 의도치 않은 영향을 줄 수 있는가?
   예) CATEGORY > BRAND 우선 규칙 — 브랜드 등록 시 카테고리와 충돌하는가?
 - **커버리지 과잉**: SIMILAR 동의어가 너무 넓어서 관련 없는 상품이 노출될 수 있는가?
+- **priority 변경 연쇄 효과**: priority를 바꾸면 해당 키워드와 토큰이 겹치는 다른 키워드의 매칭 순서가 함께 바뀌는가?
+  예) "자라"의 priority를 올리면, "자라 셔츠" 쿼리에서 "자라" 단독 매칭이 늦춰지는 건 의도된 결과인가?
+- **priority 수치 근거**: rank 기반 제안값이 실제 다른 키워드들과 비교해 납득 가능한 수치인가?
+  예) rank=3인 키워드에 priority=10 제안 — 현재 priority=10 이하인 다른 키워드가 몇 개인지 확인했는가?
 
 ### Blue (방어): 제안이 올바른 이유, 또는 수정된 대안
 - Red의 지적이 타당하면 수정된 제안값 제시
@@ -499,7 +583,7 @@ echo "     ✅ Wave C 완료"
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  Wave D — Propose: 승인된 플랜 기반 SQL 생성 (4 병렬)    │"
+echo "│  Wave D — Propose: 승인된 플랜 기반 SQL 생성 (5 병렬)    │"
 echo "└─────────────────────────────────────────────────────────┘"
 
 DEBATE_PLAN="$(cat "${FLAG_DIR}/debate_plan.json" 2>/dev/null || echo '{}')"
@@ -662,6 +746,88 @@ touch "${FLAG_DIR}/d3_synonym_fixer_done"
 SYNFIXEOF
 )
 
+# ── D5: priority_fixer — WRONG_PRIORITY (UPDATE priority) ───
+PRIORITY_FIXER_PROMPT=$(cat << PRIFIXEOF
+# SKQ Wave D5 — priority_fixer Agent
+
+당신은 키워드 우선순위(priority) 역전 문제를 해결하는 SQL 생성 에이전트입니다.
+
+${WAVE_D_COMMON}
+
+## 담당 범위
+\`approved_proposals\` 중 \`diagnosis_code\`가 \`WRONG_PRIORITY\`인 항목만 처리.
+해당 항목이 없으면 빈 SQL 파일을 생성하고 완료 신호를 남깁니다.
+
+## priority 동작 원리
+
+토큰 매칭 정렬 기준 (낮을수록 먼저 매칭):
+  1. priority ASC  ← 이것이 1순위
+  2. 토큰 커버 수 DESC (복합어 우선)
+  3. TYPE_PRIORITY: CATEGORY(0) > BRAND(1) > COLOR(2)
+
+즉, priority가 같으면 더 많은 토큰을 커버하는 키워드가 이기지만,
+priority가 다르면 무조건 낮은 숫자가 먼저 매칭됩니다.
+
+## 케이스별 SQL 패턴
+
+### 케이스 1 — rank 기반 중요도 역전 (conflict_keyword가 null인 경우)
+\`\`\`sql
+-- [키워드] WRONG_PRIORITY → UPDATE_PRIORITY
+-- 이유: rank={rank}인 주요 키워드가 priority={current_priority}(기본값)로 중요도 미반영
+-- verdict_note: {debate에서 확인된 제안 priority}
+-- 검증: SELECT id, keyword, priority, rank FROM search_keywords WHERE priority <= {proposed_priority} ORDER BY priority ASC LIMIT 10;
+UPDATE search_keywords
+SET priority = {proposed_priority},
+    updated_at = NOW()
+WHERE id = {id}
+  AND priority = {current_priority};
+\`\`\`
+
+### 케이스 2 — 토큰 포함 관계 충돌 (conflict_keyword가 있는 경우)
+포괄 키워드(짧은 것)의 priority를 올려서(숫자 크게) 구체 키워드(긴 것)가 먼저 매칭되도록.
+
+\`\`\`sql
+-- [키워드A] WRONG_PRIORITY → UPDATE_PRIORITY (충돌 해소)
+-- 이유: '{keyword_a}'(priority={pa})가 '{keyword_b}'(priority={pb})보다 우선 매칭돼 토큰 충돌
+-- 해결: '{keyword_a}'의 priority를 '{keyword_b}'보다 높게(숫자 크게) 설정
+-- verdict_note: {debate 결정 내용}
+-- 검증:
+--   SELECT id, keyword, priority FROM search_keywords
+--   WHERE id IN ({id_a}, {id_b});
+UPDATE search_keywords
+SET priority = {proposed_priority},
+    updated_at = NOW()
+WHERE id = {id}
+  AND priority = {current_priority};
+\`\`\`
+
+## 주의사항
+- priority를 낮추는(숫자 작게) 경우: 다른 키워드와의 새로운 충돌 발생 여부를 debate_plan의 verdict_note에서 확인
+- priority를 올리는(숫자 크게) 경우: 해당 키워드가 더 늦게 매칭되므로 단독 검색 시 영향 없음 (토큰 충돌이 있을 때만 의미)
+- 한 번에 여러 키워드 priority를 변경하는 경우 순서 무관 (독립적 UPDATE)
+
+## 출력
+- \`${FLAG_DIR}/d5_priority_fixer.sql\`
+- \`${FLAG_DIR}/d5_priority_fixer_done\` (완료 신호)
+
+SQL 파일 헤더:
+\`\`\`sql
+-- ============================================
+-- SKQ Wave D5: priority_fixer
+-- 실행 ID: ${RUN_ID}
+-- ============================================
+BEGIN;
+...
+COMMIT;
+\`\`\`
+
+완료 후:
+\`\`\`bash
+touch "${FLAG_DIR}/d5_priority_fixer_done"
+\`\`\`
+PRIFIXEOF
+)
+
 # ── D4: anchor_fixer — POSSIBLE_FALLBACK (UPDATE 발골사전) ───
 ANCHOR_FIXER_PROMPT=$(cat << ANCFIXEOF
 # SKQ Wave D4 — anchor_fixer Agent
@@ -718,19 +884,23 @@ claude --dangerously-skip-permissions -p "${SYNONYM_FIXER_PROMPT}" &
 D3_PID=$!
 claude --dangerously-skip-permissions -p "${ANCHOR_FIXER_PROMPT}" &
 D4_PID=$!
+claude --dangerously-skip-permissions -p "${PRIORITY_FIXER_PROMPT}" &
+D5_PID=$!
 
-echo "     D1 zero_fixer    PID: ${D1_PID}"
-echo "     D2 type_fixer    PID: ${D2_PID}"
-echo "     D3 synonym_fixer PID: ${D3_PID}"
-echo "     D4 anchor_fixer  PID: ${D4_PID}"
+echo "     D1 zero_fixer     PID: ${D1_PID}"
+echo "     D2 type_fixer     PID: ${D2_PID}"
+echo "     D3 synonym_fixer  PID: ${D3_PID}"
+echo "     D4 anchor_fixer   PID: ${D4_PID}"
+echo "     D5 priority_fixer PID: ${D5_PID}"
 
 wait "${D1_PID}" || true
 wait "${D2_PID}" || true
 wait "${D3_PID}" || true
 wait "${D4_PID}" || true
+wait "${D5_PID}" || true
 
 D_DONE=0
-for agent in d1_zero_fixer d2_type_fixer d3_synonym_fixer d4_anchor_fixer; do
+for agent in d1_zero_fixer d2_type_fixer d3_synonym_fixer d4_anchor_fixer d5_priority_fixer; do
   if [[ -f "${FLAG_DIR}/${agent}_done" ]]; then
     echo "     ✅ ${agent} 완료"
     D_DONE=$((D_DONE + 1))
@@ -786,7 +956,8 @@ ${DEBATE_PLAN}
 ### 1. \`${OUTPUT_DIR}/ship.sql\` 생성
 - 헤더 주석 (실행 ID, 생성일, 변경 요약 카운트)
 - 전체 하나의 BEGIN/COMMIT 트랜잭션
-- d*.sql의 SQL을 fix_type별로 정렬하여 통합 (INSERT_KEYWORD → UPDATE_KEYWORD_TYPE → INSERT_SYNONYM → UPDATE_ANCHOR 순)
+- d*.sql의 SQL을 fix_type별로 정렬하여 통합 (INSERT_KEYWORD → UPDATE_KEYWORD_TYPE → UPDATE_PRIORITY → INSERT_SYNONYM → UPDATE_ANCHOR 순)
+  ※ UPDATE_PRIORITY는 토큰 매칭 기준을 바꾸므로 다른 변경보다 먼저 적용해야 일관성 유지
 - REJECT된 항목은 포함하지 않음
 
 ### 2. \`${OUTPUT_DIR}/ship-manifest.md\` 생성
@@ -873,6 +1044,9 @@ ${DB_CONTEXT}
    - ETC_TYPE → 올바른 타입: 발골 성공 시 해당 카테고리/브랜드 전체 상품 노출
    - NO_SYNONYM + SAME 동의어: Tier1 확장 → target 키워드 상품이 동일 우선순위로 합산됨
    - POSSIBLE_FALLBACK + 발골 연결: 텍스트 검색 → 정밀 필터 전환 → 정확도 향상 (결과 수는 감소할 수 있음)
+   - WRONG_PRIORITY + priority 조정:
+     - rank 기반 중요도 역전 해소: 직접적인 결과 수 변화는 없으나, 해당 키워드가 복합 쿼리에서 올바르게 우선 매칭됨
+     - 토큰 충돌 해소: 포괄 키워드(예: "자라")가 구체 쿼리(예: "자라체크")에서 잘못 매칭되던 케이스가 제거됨 → 해당 구체 키워드의 정밀 필터 시나리오로 정상 전환
 
 3. **최종 리포트 생성**
 
