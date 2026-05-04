@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>skq — Search Keyword Quality 워크플로</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --accent: #7c3aed;
+    --header-h: 96px;
+  }
+
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── 공통 헤더 ── */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #fff;
+    box-shadow: 0 1px 0 var(--border);
+  }
+  .top-nav {
+    padding: 0 48px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .nav-left { display: flex; align-items: center; gap: 4px; }
+  .nav-logo { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); text-decoration: none; padding: 6px 12px 6px 0; }
+  .nav-logo span { color: #7c3aed; }
+  .nav-divider { width: 1px; height: 20px; background: var(--border); margin: 0 8px; }
+  .nav-link { font-size: 13px; font-weight: 500; color: var(--text-secondary); text-decoration: none; padding: 6px 12px; border-radius: 6px; transition: background .12s, color .12s; }
+  .nav-link:hover { background: #f3f4f6; color: var(--text-primary); }
+  .nav-link.active { background: #f5f3ff; color: #7c3aed; }
+  .nav-badge { font-size: 11px; font-weight: 600; background: #f5f3ff; color: #7c3aed; padding: 3px 10px; border-radius: 20px; }
+  .breadcrumb {
+    padding: 9px 48px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color .12s; }
+  .breadcrumb a:hover { color: #7c3aed; }
+  .bc-sep { color: #d1d5db; margin: 0 2px; }
+  .bc-current { color: var(--text-primary); font-weight: 500; }
+
+  /* ── 레이아웃 ── */
+  .layout {
+    display: flex;
+    flex: 1;
+    min-height: calc(100vh - var(--header-h));
+    background: var(--bg);
+  }
+
+  /* ── 사이드바 ── */
+  .sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+    position: sticky;
+    top: var(--header-h);
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto;
+  }
+  .sidebar-logo {
+    padding: 0 24px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sidebar-logo .logo-icon { font-size: 22px; line-height: 1; }
+  .sidebar-logo .logo-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .sidebar-logo .logo-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .nav-section-title {
+    padding: 8px 24px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 24px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: background .1s, color .1s;
+  }
+  .nav-item:hover { background: #f9fafb; color: var(--text-primary); }
+  .nav-num { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); min-width: 16px; }
+
+  /* ── 메인 ── */
+  .main {
+    flex: 1;
+    padding: 32px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    max-width: calc(100% - 240px);
+  }
+
+  /* ── 헤더 카드 ── */
+  .header {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+    border: 1px solid #ddd6fe;
+    border-radius: 16px;
+    padding: 28px 32px;
+  }
+  .header-icon { font-size: 44px; line-height: 1; flex-shrink: 0; }
+  .header-text h1 { font-size: 28px; font-weight: 800; color: #3b0764; font-family: 'JetBrains Mono', monospace; }
+  .header-text p { font-size: 15px; color: #5b21b6; margin-top: 6px; line-height: 1.5; }
+  .badge { display: inline-block; margin-top: 12px; padding: 4px 12px; background: #7c3aed; color: #fff; border-radius: 20px; font-size: 12px; font-weight: 600; }
+
+  /* ── 카드 공통 ── */
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    padding: 28px 32px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #9ca3af;
+    margin-bottom: 20px;
+  }
+
+  /* ── 2열 그리드 ── */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  /* ── 전체 플로우 ── */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .flow-step {
+    display: flex;
+    gap: 20px;
+    position: relative;
+  }
+  .flow-step:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 19px;
+    top: 40px;
+    bottom: -12px;
+    width: 2px;
+    background: #e5e7eb;
+  }
+  .flow-step + .flow-step { margin-top: 12px; }
+  .step-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .step-body { flex: 1; padding: 8px 0 16px; }
+  .step-label { font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+  .step-title { font-size: 16px; font-weight: 700; color: #111827; margin: 3px 0 6px; }
+  .step-desc { font-size: 14px; color: #4b5563; line-height: 1.6; }
+  .step-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 6px;
+    background: #f3f4f6;
+    color: #374151;
+  }
+
+  /* 색상 팔레트 */
+  .c-violet  { background: #f5f3ff; color: #7c3aed; }
+  .c-indigo  { background: #eef2ff; color: #4f46e5; }
+  .c-blue    { background: #eff6ff; color: #2563eb; }
+  .c-cyan    { background: #ecfeff; color: #0891b2; }
+  .c-teal    { background: #f0fdfa; color: #0d9488; }
+  .c-green   { background: #f0fdf4; color: #16a34a; }
+  .c-amber   { background: #fffbeb; color: #d97706; }
+  .c-red     { background: #fef2f2; color: #dc2626; }
+  .c-gray    { background: #f9fafb; color: #374151; }
+  .c-pink    { background: #fdf2f8; color: #db2777; }
+
+  .icon-bg-violet { background: #f5f3ff; }
+  .icon-bg-indigo { background: #eef2ff; }
+  .icon-bg-blue   { background: #eff6ff; }
+  .icon-bg-cyan   { background: #ecfeff; }
+  .icon-bg-teal   { background: #f0fdfa; }
+  .icon-bg-green  { background: #f0fdf4; }
+  .icon-bg-amber  { background: #fffbeb; }
+  .icon-bg-red    { background: #fef2f2; }
+  .icon-bg-gray   { background: #f3f4f6; }
+  .icon-bg-pink   { background: #fdf2f8; }
+
+  /* ── tmux 시각화 ── */
+  .tmux-preview {
+    background: #1e2030;
+    border-radius: 10px;
+    padding: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #a9b1d6;
+  }
+  .tmux-row {
+    display: flex;
+    gap: 6px;
+    min-height: 70px;
+  }
+  .tmux-row + .tmux-row { margin-top: 6px; }
+  .tmux-pane {
+    border: 1px solid #3d405e;
+    border-radius: 5px;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+  }
+  .pane-main { flex: 0 0 34%; min-height: 70px; }
+  .pane-single { flex: 1; }
+  .phase-col { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .pane-multi { flex: 1; min-height: 30px; }
+  .pane-title { font-size: 10px; font-weight: 600; color: #7aa2f7; border-bottom: 1px solid #3d405e; padding-bottom: 3px; margin-bottom: 2px; }
+  .pane-content { font-size: 10px; color: #a9b1d6; line-height: 1.4; }
+
+  /* ── 에이전트 그리드 ── */
+  .agent-grid { display: flex; flex-direction: column; gap: 12px; }
+  .agent-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+  }
+  .agent-emoji { font-size: 22px; line-height: 1; flex-shrink: 0; }
+  .agent-name { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: #111827; }
+  .agent-phase { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 3px; }
+  .phase-a { background: #ecfeff; color: #0891b2; }
+  .phase-b { background: #eef2ff; color: #4f46e5; }
+  .phase-c { background: #f5f3ff; color: #7c3aed; }
+  .phase-d { background: #f0fdf4; color: #16a34a; }
+  .phase-e { background: #fffbeb; color: #d97706; }
+  .phase-f { background: #fef2f2; color: #dc2626; }
+  .agent-desc { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.5; }
+
+  /* ── SQL 적용 플로우 ── */
+  .ship-flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    margin: 16px 0;
+  }
+  .ship-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 16px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    min-width: 100px;
+  }
+  .ship-node-icon { font-size: 20px; }
+  .ship-node-label { font-size: 11px; font-weight: 600; color: #374151; margin-top: 5px; text-align: center; }
+  .ship-node-sub { font-size: 10px; color: #9ca3af; text-align: center; margin-top: 2px; }
+  .ship-arrow { font-size: 18px; color: #d1d5db; padding: 0 6px; }
+
+  /* ── 코드 블록 ── */
+  .code {
+    background: #1e2030;
+    border-radius: 10px;
+    padding: 18px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #a9b1d6;
+    line-height: 1.8;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .cm { color: #565f89; }
+  .cv { color: #7aa2f7; }
+  .cs { color: #9ece6a; }
+  .ck { color: #bb9af7; }
+
+  /* ── 요약 박스 ── */
+  .summary-box {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-left: 4px solid #7c3aed;
+    border-radius: 10px;
+    padding: 16px 20px;
+  }
+  .s-title { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 10px; }
+  .summary-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .summary-list li { font-size: 13px; color: #4b5563; line-height: 1.6; padding-left: 12px; position: relative; }
+  .summary-list li::before { content: '•'; position: absolute; left: 0; color: #7c3aed; }
+  code { background: #f3f4f6; color: #7c3aed; padding: 1px 5px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+  /* ── 푸터 ── */
+  .site-footer {
+    background: #fff;
+    border-top: 1px solid var(--border);
+    padding: 16px 48px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .site-footer a { color: #7c3aed; text-decoration: none; }
+  .site-footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="top-nav">
+    <div class="nav-left">
+      <a href="/" class="nav-logo">tmux<span>.</span>agents</a>
+      <div class="nav-divider"></div>
+      <a href="/" class="nav-link">Overview</a>
+      <a href="../sq/sq-overview.html" class="nav-link">sq</a>
+      <a href="skq-overview.html" class="nav-link active">skq</a>
+    </div>
+    <span class="nav-badge">🎯 SKQ Stable</span>
+  </div>
+  <div class="breadcrumb">
+    <a href="/">tmux.agents</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">skq</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ── 사이드바 ── -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">🎯</div>
+      <div>
+        <div class="logo-title">skq</div>
+        <div class="logo-sub">Search Keyword Quality</div>
+      </div>
+    </div>
+
+    <div class="nav-section-title">워크플로</div>
+    <a href="#flow" class="nav-item"><span class="nav-num">A</span>Discovery</a>
+    <a href="#flow" class="nav-item"><span class="nav-num">B</span>Analysis</a>
+    <a href="#flow" class="nav-item"><span class="nav-num">C</span>Plan Debate</a>
+    <a href="#flow" class="nav-item"><span class="nav-num">D</span>Propose (5 병렬)</a>
+    <a href="#flow" class="nav-item"><span class="nav-num">E</span>Ship-Ready</a>
+    <a href="#flow" class="nav-item"><span class="nav-num">F</span>Validate</a>
+
+    <div class="nav-section-title">참조</div>
+    <a href="#agents" class="nav-item"><span class="nav-num">—</span>에이전트 구성</a>
+    <a href="#tmux" class="nav-item"><span class="nav-num">—</span>tmux 레이아웃</a>
+    <a href="#files" class="nav-item"><span class="nav-num">—</span>파일 구조</a>
+    <a href="#diagnosis" class="nav-item"><span class="nav-num">—</span>진단 코드</a>
+    <a href="#db" class="nav-item"><span class="nav-num">—</span>DB 접근</a>
+    <div class="nav-section-title">사용</div>
+    <a href="#usage" class="nav-item"><span class="nav-num">—</span>사용법</a>
+  </nav>
+
+  <!-- ── 메인 ── -->
+  <div class="main">
+
+  <!-- ── 헤더 ── -->
+  <div class="header">
+    <div class="header-icon">🎯</div>
+    <div class="header-text">
+      <h1>skq</h1>
+      <p>검색 키워드 품질 자동 개선 — 6-Phase 직렬 멀티에이전트로 DB 진단부터 SQL 생성까지</p>
+      <span class="badge">Search Keyword Quality · 6-Phase · SQL</span>
+    </div>
+  </div>
+
+  <!-- ── SQL 적용 플로우 ── -->
+  <div class="card">
+    <div class="card-title">전체 워크플로 — skq → ship</div>
+    <div class="ship-flow">
+      <div class="ship-node">
+        <div class="ship-node-icon">🎯</div>
+        <div class="ship-node-label">skq 실행</div>
+        <div class="ship-node-sub">6-Phase 자동 실행</div>
+      </div>
+      <div class="ship-arrow">→</div>
+      <div class="ship-node">
+        <div class="ship-node-icon">🔍</div>
+        <div class="ship-node-label">DB 발굴</div>
+        <div class="ship-node-sub">Phase A</div>
+      </div>
+      <div class="ship-arrow">→</div>
+      <div class="ship-node">
+        <div class="ship-node-icon">🔬</div>
+        <div class="ship-node-label">진단 분석</div>
+        <div class="ship-node-sub">Phase B</div>
+      </div>
+      <div class="ship-arrow">→</div>
+      <div class="ship-node">
+        <div class="ship-node-icon">🗣️</div>
+        <div class="ship-node-label">도메인 검증</div>
+        <div class="ship-node-sub">Phase C</div>
+      </div>
+      <div class="ship-arrow">→</div>
+      <div class="ship-node">
+        <div class="ship-node-icon">⚡</div>
+        <div class="ship-node-label">SQL 생성</div>
+        <div class="ship-node-sub">Phase D · 5 병렬</div>
+      </div>
+      <div class="ship-arrow">→</div>
+      <div class="ship-node">
+        <div class="ship-node-icon">📦</div>
+        <div class="ship-node-label">패키징</div>
+        <div class="ship-node-sub">Phase E</div>
+      </div>
+      <div class="ship-arrow">→</div>
+      <div class="ship-node">
+        <div class="ship-node-icon">📊</div>
+        <div class="ship-node-label">효과 추정</div>
+        <div class="ship-node-sub">Phase F</div>
+      </div>
+      <div class="ship-arrow">→</div>
+      <div class="ship-node" style="background:#f5f3ff;border-color:#ddd6fe;">
+        <div class="ship-node-icon">🚢</div>
+        <div class="ship-node-label" style="color:#7c3aed;">ship 명령어</div>
+        <div class="ship-node-sub">SQL 검토 후 적용</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;">
+      <span class="tag c-violet">✓ 결과는 docs/reports/skq-{timestamp}/ 에 저장</span>
+      <span class="tag c-green">✓ 각 Phase 완료 후 다음 Phase 자동 시작</span>
+      <span class="tag c-amber">✓ ship.sql은 검토 후 수동 실행 — DB 직접 쓰기</span>
+      <span class="tag c-blue">✓ ship --dry-run 으로 SQL 미리보기 가능</span>
+    </div>
+  </div>
+
+  <!-- ── 전체 실행 흐름 ── -->
+  <div class="card" id="flow">
+    <div class="card-title">전체 실행 흐름 — 6-Phase 직렬 파이프라인</div>
+    <div class="flow">
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-cyan">🔍</div>
+        <div class="step-body">
+          <div class="step-label">Phase A</div>
+          <div class="step-title">Discovery — DB 기반 개선 대상 발굴</div>
+          <div class="step-desc">5종 쿼리를 psql로 직접 실행해 개선이 필요한 키워드를 자동 발굴합니다. rank(검색량)가 낮을수록 우선 선정.</div>
+          <div class="step-tags">
+            <span class="tag c-red">ZERO_RESULT — 결과 0건</span>
+            <span class="tag c-amber">ETC_TYPE — 분류 불가</span>
+            <span class="tag c-blue">NO_SYNONYM — 동의어 없음</span>
+            <span class="tag c-teal">POSSIBLE_FALLBACK — 발골사전 미연결</span>
+            <span class="tag c-violet">WRONG_PRIORITY — 우선순위 역전</span>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:#6b7280;">출력: <code>discovery.json</code> · <code>phase-a-discovery.md</code></div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-indigo">🔬</div>
+        <div class="step-body">
+          <div class="step-label">Phase B</div>
+          <div class="step-title">Analysis — 키워드별 구체적 수정 방향 제안</div>
+          <div class="step-desc">Phase A 발굴 결과를 바탕으로 각 키워드를 DB에서 직접 조회하며 <strong>구체적인 수정값</strong>을 결정합니다. 단순 진단이 아닌 실행 가능한 수치 제안.</div>
+          <div class="step-tags">
+            <span class="tag c-blue">target_keyword_id 탐색</span>
+            <span class="tag c-teal">brand_id / product_midtype_ids 조회</span>
+            <span class="tag c-violet">proposed_priority 계산</span>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:#6b7280;">출력: <code>analysis.json</code> (각 키워드별 fix_type + 구체 수정값) · <code>phase-b-analysis.md</code></div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-violet">🗣️</div>
+        <div class="step-body">
+          <div class="step-label">Phase C</div>
+          <div class="step-title">Plan Debate — 수정 방향 도메인 적합성 토론</div>
+          <div class="step-desc">Red(반론) → Blue(방어/대안) → Judge(판정) 구조로 각 제안의 <strong>도메인 적합성</strong>을 검증합니다. SQL 안전성이 아닌 검색 의미 정확성에 집중.</div>
+          <div class="step-tags">
+            <span class="tag c-red">🔴 Red — 타입 오류·동의어 의미 차이·발골 ID 불일치 공격</span>
+            <span class="tag c-blue">🔵 Blue — DB 증거 기반 방어 또는 수정 대안 제시</span>
+            <span class="tag c-amber">⚖️ Judge — APPROVE / MODIFY / REJECT 판정</span>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:#6b7280;">출력: <code>debate_plan.json</code> (approved_proposals + rejected_proposals) · <code>phase-c-debate.md</code></div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-green">⚡</div>
+        <div class="step-body">
+          <div class="step-label">Phase D</div>
+          <div class="step-title">Propose — 승인된 플랜 기반 SQL 생성 (5 에이전트 병렬)</div>
+          <div class="step-desc">Phase C에서 APPROVE/MODIFY된 항목만 처리. 5개 에이전트가 diagnosis_code를 기준으로 자신의 담당 항목만 필터링해 병렬 실행합니다. 해당 항목이 없으면 빈 SQL + 완료 신호 자동 생성.</div>
+          <div class="step-tags">
+            <span class="tag" style="background:#ecfeff;color:#0891b2;">1️⃣ D1 zero_fixer — ZERO_RESULT</span>
+            <span class="tag" style="background:#eef2ff;color:#4f46e5;">2️⃣ D2 type_fixer — ETC_TYPE</span>
+            <span class="tag" style="background:#f5f3ff;color:#7c3aed;">3️⃣ D3 synonym_fixer — NO_SYNONYM</span>
+            <span class="tag" style="background:#f0fdf4;color:#16a34a;">4️⃣ D4 anchor_fixer — POSSIBLE_FALLBACK</span>
+            <span class="tag" style="background:#fffbeb;color:#d97706;">5️⃣ D5 priority_fixer — WRONG_PRIORITY</span>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:#6b7280;">출력: <code>d1_zero_fixer.sql</code> · <code>d2_type_fixer.sql</code> · <code>d3_synonym_fixer.sql</code> · <code>d4_anchor_fixer.sql</code> · <code>d5_priority_fixer.sql</code></div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="step-icon icon-bg-amber">📦</div>
+        <div class="step-body">
+          <div class="step-label">Phase E</div>
+          <div class="step-title">Ship-Ready — 최종 SQL 패키징 + 매니페스트</div>
+          <div class="step-desc">D1~D5 SQL을 하나의 트랜잭션으로 통합. <strong>적용 순서 보장:</strong> UPDATE_PRIORITY → UPDATE_KEYWORD_TYPE → INSERT_SYNONYM → UPDATE_ANCHOR. 토큰 매칭 기준이 먼저 확정되어야 이후 변경이 일관성 유지.</div>
+          <div style="margin-top:10px;font-size:12px;color:#6b7280;">출력: <code>ship.sql</code> (단일 BEGIN/COMMIT) · <code>ship-manifest.md</code> (변경 요약 + 롤백 SQL)</div>
+        </div>
+      </div>
+
+      <div class="flow-step" style="margin-bottom: 0;">
+        <div class="step-icon icon-bg-red">📊</div>
+        <div class="step-body">
+          <div class="step-label">Phase F</div>
+          <div class="step-title">Validate — 예상 개선도 추정 + 최종 리포트</div>
+          <div class="step-desc">ship.sql 적용 시 기대 효과를 fix_type별 논리에 따라 추정합니다. SIMILAR 동의어 추가 시 Tier2 폴백 노출 예상, POSSIBLE_FALLBACK 해소 시 정밀 필터 전환 효과 등.</div>
+          <div style="margin-top:10px;font-size:12px;color:#6b7280;">출력: <code>phase-f-validate.md</code> (키워드별 현재/예상 결과수 · 적용 권장도)</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── 에이전트 구성 + tmux 레이아웃 ── -->
+  <div class="grid-2" id="agents">
+
+    <div class="card">
+      <div class="card-title">에이전트 구성 — Phase별 역할</div>
+      <div class="agent-grid">
+        <div class="agent-card">
+          <div class="agent-emoji">🔍</div>
+          <div>
+            <div class="agent-name">discovery</div>
+            <div class="agent-phase phase-a">Phase A</div>
+            <div class="agent-desc">DB 5종 쿼리 실행 → 개선 대상 키워드 발굴 → <code>discovery.json</code> 생성</div>
+          </div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">🔬</div>
+          <div>
+            <div class="agent-name">analysis</div>
+            <div class="agent-phase phase-b">Phase B</div>
+            <div class="agent-desc">각 키워드 DB 조회 → 구체적 수정값 결정 → <code>analysis.json</code> 생성</div>
+          </div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">🗣️</div>
+          <div>
+            <div class="agent-name">debate (Red/Blue/Judge)</div>
+            <div class="agent-phase phase-c">Phase C</div>
+            <div class="agent-desc">도메인 적합성 토론 → APPROVE/MODIFY/REJECT 판정 → <code>debate_plan.json</code> 생성</div>
+          </div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">1️⃣–5️⃣</div>
+          <div>
+            <div class="agent-name">D1~D5 fixers (5 병렬)</div>
+            <div class="agent-phase phase-d">Phase D</div>
+            <div class="agent-desc">각자 담당 diagnosis_code 필터링 → SQL 생성. 해당 항목 없으면 빈 SQL 자동 출력</div>
+          </div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">📦</div>
+          <div>
+            <div class="agent-name">ship_ready</div>
+            <div class="agent-phase phase-e">Phase E</div>
+            <div class="agent-desc">D1~D5 SQL 통합 → 순서 정렬 → <code>ship.sql</code> + <code>ship-manifest.md</code> 생성</div>
+          </div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-emoji">📊</div>
+          <div>
+            <div class="agent-name">validate</div>
+            <div class="agent-phase phase-f">Phase F</div>
+            <div class="agent-desc">현재 DB 상태 조회 → fix_type별 효과 추정 → <code>phase-f-validate.md</code> 생성</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="tmux">
+      <div class="card-title">tmux 레이아웃 — Phase별 패널 변화</div>
+
+      <!-- Phase A~C, E, F: 단일 에이전트 -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="background:#1a2a4a;color:#7aa2f7;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;">Phase A / B / C / E / F</span>
+          <span style="font-size:12px;font-weight:600;color:#374151;">단일 에이전트 패널</span>
+        </div>
+        <div class="tmux-preview">
+          <div class="tmux-row">
+            <div class="tmux-pane pane-main">
+              <div class="pane-title">🎯 skq</div>
+              <div class="pane-content">Phase A 실행 중...<br>⏳ discovery 대기 (12s)</div>
+            </div>
+            <div class="tmux-pane pane-single">
+              <div class="pane-title">🔍 phase_A_discovery</div>
+              <div class="pane-content">Q1 ZERO_RESULT 조회 중...<br>결과: 18건 발견</div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:#9ca3af;">Phase 완료 → 패널 자동 닫힘 → 메인 복귀 → 다음 Phase 시작</div>
+      </div>
+
+      <!-- 화살표 -->
+      <div style="text-align:center;font-size:16px;color:#9ca3af;margin:4px 0 10px;letter-spacing:2px;">↓ Phase D — 5 에이전트 병렬</div>
+
+      <!-- Phase D: 5 병렬 -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="background:#1a3a2a;color:#4ade80;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;">Phase D</span>
+          <span style="font-size:12px;font-weight:600;color:#374151;">5 에이전트 동시 실행</span>
+        </div>
+        <div class="tmux-preview">
+          <div class="tmux-row" style="min-height:140px;">
+            <div class="tmux-pane pane-main">
+              <div class="pane-title">🎯 skq</div>
+              <div class="pane-content">Phase D 실행 중...<br>⏳ 5 에이전트<br>&nbsp;&nbsp;0/5 완료 (24s)</div>
+            </div>
+            <div class="phase-col">
+              <div class="tmux-pane pane-multi">
+                <div class="pane-title" style="color:#38bdf8;">1️⃣ D1_zero_fixer</div>
+                <div class="pane-content">INSERT SIMILAR 생성 중</div>
+              </div>
+              <div class="tmux-pane pane-multi">
+                <div class="pane-title" style="color:#818cf8;">2️⃣ D2_type_fixer</div>
+                <div class="pane-content">ETC_TYPE 항목 없음 → skip</div>
+              </div>
+              <div class="tmux-pane pane-multi">
+                <div class="pane-title" style="color:#c084fc;">3️⃣ D3_synonym_fixer</div>
+                <div class="pane-content">SAME 동의어 SQL 작성 중</div>
+              </div>
+              <div class="tmux-pane pane-multi">
+                <div class="pane-title" style="color:#4ade80;">4️⃣ D4_anchor_fixer</div>
+                <div class="pane-content">brand_id 연결 SQL 생성 중</div>
+              </div>
+              <div class="tmux-pane pane-multi">
+                <div class="pane-title" style="color:#fbbf24;">5️⃣ D5_priority_fixer</div>
+                <div class="pane-content">priority 충돌 해소 중</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:#9ca3af;">5개 모두 done 플래그 확인 후 패널 일괄 종료</div>
+      </div>
+
+      <div style="margin-top:8px;background:#f9fafb;border-radius:8px;padding:10px 12px;">
+        <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;">tmux 없이 실행 시</div>
+        <div style="font-size:12px;color:#6b7280;line-height:1.6;">백그라운드 세션 모드로 자동 전환. <code>tmux new-session -d</code>로 각 에이전트를 별도 세션에서 실행. done 플래그 폴링 방식은 동일.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 파일 구조 ── -->
+  <div class="card" id="files">
+    <div class="card-title">📁 실행 시 생성되는 파일 구조</div>
+    <p style="font-size:13px;color:#6b7280;margin:0 0 20px;">모든 임시 파일은 <code>.agent/skq-{timestamp}/</code>에, 최종 결과물은 <code>docs/reports/skq-{timestamp}/</code>에 생성됩니다.</p>
+
+    <!-- 에이전트 공통 패턴 -->
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:20px;">
+      <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:8px;">▸ 에이전트 공통 패턴</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;">
+        <span style="background:#eff6ff;color:#2563eb;padding:3px 9px;border-radius:5px;font-family:monospace;font-weight:600;">prompt_phase_X.txt</span>
+        <span style="color:#9ca3af;font-size:14px;">→</span>
+        <span style="background:#f0fdf4;color:#16a34a;padding:3px 9px;border-radius:5px;font-family:monospace;font-weight:600;">run_phase_X.sh</span>
+        <span style="color:#9ca3af;font-size:14px;">→</span>
+        <span style="background:#f5f3ff;color:#7c3aed;padding:3px 9px;border-radius:5px;font-family:monospace;font-weight:600;">claude 실행</span>
+        <span style="color:#9ca3af;font-size:14px;">→</span>
+        <span style="background:#fff1f2;color:#be123c;padding:3px 9px;border-radius:5px;font-family:monospace;font-weight:600;">phase_X_done</span>
+        <span style="color:#9ca3af;font-size:14px;">→</span>
+        <span style="color:#6b7280;font-size:12px;">skq 메인 폴링 → 다음 Phase</span>
+      </div>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+        <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
+          <th style="padding:8px 12px;text-align:left;color:#374151;font-weight:600;width:180px;">위치</th>
+          <th style="padding:8px 12px;text-align:left;color:#374151;font-weight:600;">파일</th>
+          <th style="padding:8px 12px;text-align:left;color:#374151;font-weight:600;">내용</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#7c3aed;">.agent/skq-*/</td>
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;">prompt_phase_A.txt<br>run_phase_A.sh<br>phase_A_done</td>
+          <td style="padding:8px 12px;font-size:12px;color:#6b7280;">단일 에이전트 Phase용 프롬프트·실행스크립트·완료플래그</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;background:#fafafa;">
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#7c3aed;">.agent/skq-*/</td>
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;">prompt_D1_zero_fixer.txt<br>run_D1_zero_fixer.sh<br>d1_zero_fixer_done</td>
+          <td style="padding:8px 12px;font-size:12px;color:#6b7280;">Phase D 5 에이전트 각각의 프롬프트·실행스크립트·완료플래그</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#7c3aed;">.agent/skq-*/</td>
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;">discovery.json<br>analysis.json<br>debate_plan.json<br>d1_zero_fixer.sql … d5_priority_fixer.sql</td>
+          <td style="padding:8px 12px;font-size:12px;color:#6b7280;">Phase 간 데이터 전달용 중간 파일. 다음 Phase 에이전트가 Read 툴로 참조.</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f3f4f6;background:#fafafa;">
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#7c3aed;">docs/reports/<br>skq-*/</td>
+          <td style="padding:8px 12px;font-family:monospace;font-size:12px;">ship.sql<br>ship-manifest.md<br>phase-a-discovery.md<br>phase-b-analysis.md<br>phase-c-debate.md<br>phase-f-validate.md</td>
+          <td style="padding:8px 12px;font-size:12px;color:#6b7280;">최종 결과물. ship 명령어가 ship.sql을 참조해 DB에 적용.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── 진단 코드 ── -->
+  <div class="card" id="diagnosis">
+    <div class="card-title">🔎 진단 코드 — 개선 분류 체계</div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;">
+
+      <div style="display:grid;grid-template-columns:160px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #fecaca;border-radius:10px;background:#fef2f2;">
+        <div>
+          <div style="font-family:monospace;font-size:13px;font-weight:700;color:#dc2626;">ZERO_RESULT</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px;">D1 zero_fixer</div>
+        </div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">사전에 등록은 됐지만 결과 0건. 주로 동의어 관계 부재가 원인. <strong>처방:</strong> 결과 있는 상위 키워드와 SIMILAR 관계 추가 → Tier2 폴백으로 노출.</div>
+        <div style="font-size:12px;font-weight:700;color:#dc2626;white-space:nowrap;">INSERT<br>SIMILAR</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:160px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #c7d2fe;border-radius:10px;background:#eef2ff;">
+        <div>
+          <div style="font-family:monospace;font-size:13px;font-weight:700;color:#4f46e5;">ETC_TYPE</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px;">D2 type_fixer</div>
+        </div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">keyword_type이 ETC라 발골 파이프라인이 동작 안 함. <strong>처방:</strong> 올바른 타입(BRAND/CATEGORY/COLOR)으로 변경 + category_main 수정 + 발골사전 연결.</div>
+        <div style="font-size:12px;font-weight:700;color:#4f46e5;white-space:nowrap;">UPDATE<br>TYPE</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:160px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #ddd6fe;border-radius:10px;background:#f5f3ff;">
+        <div>
+          <div style="font-family:monospace;font-size:13px;font-weight:700;color:#7c3aed;">NO_SYNONYM</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px;">D3 synonym_fixer</div>
+        </div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">SAME 동의어가 없어 Tier1 검색 범위가 자기 자신뿐. <strong>처방:</strong> 동의어 키워드와 SAME 관계 추가 → Tier1 확장. Debate에서 SIMILAR가 더 적합하면 변경.</div>
+        <div style="font-size:12px;font-weight:700;color:#7c3aed;white-space:nowrap;">INSERT<br>SAME</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:160px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #a7f3d0;border-radius:10px;background:#f0fdf4;">
+        <div>
+          <div style="font-family:monospace;font-size:13px;font-weight:700;color:#059669;">POSSIBLE_FALLBACK</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px;">D4 anchor_fixer</div>
+        </div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">BRAND/CATEGORY/COLOR인데 발골사전 미연결 → 텍스트 검색만 사용. <strong>처방:</strong> brand_id 또는 product_midtype_ids 연결 → 정밀 필터 시나리오로 전환.</div>
+        <div style="font-size:12px;font-weight:700;color:#059669;white-space:nowrap;">UPDATE<br>ANCHOR</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:160px 1fr auto;align-items:start;gap:12px;padding:14px 16px;border:2px solid #fde68a;border-radius:10px;background:#fffbeb;">
+        <div>
+          <div style="font-family:monospace;font-size:13px;font-weight:700;color:#d97706;">WRONG_PRIORITY</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px;">D5 priority_fixer</div>
+        </div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">
+          토큰 매칭 순서 이상. priority(낮을수록 먼저)가 1순위로 작동.<br>
+          <strong>케이스 1:</strong> rank 상위인데 priority=100(기본값) → 중요 키워드가 후순위 매칭.<br>
+          <strong>케이스 2:</strong> "자라"(BRAND)와 "자라체크"(CATEGORY)가 동일 priority → "자라체크" 쿼리에서 "자라"가 먼저 매칭 → 브랜드 시나리오로 잘못 처리.
+        </div>
+        <div style="font-size:12px;font-weight:700;color:#d97706;white-space:nowrap;">UPDATE<br>PRIORITY</div>
+      </div>
+
+    </div>
+
+    <!-- SAME vs SIMILAR -->
+    <div style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">
+      <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:8px;">Tier1 / Tier2 폴백 구조</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="padding:10px 12px;background:#eff6ff;border-radius:8px;">
+          <div style="font-size:12px;font-weight:700;color:#2563eb;margin-bottom:4px;">Tier 1 — SAME 동의어</div>
+          <div style="font-size:12px;color:#374151;line-height:1.6;">사용자 쿼리와 매칭된 키워드의 SAME 관계 키워드까지 합산. 항상 실행.</div>
+          <div style="margin-top:6px;font-size:11px;color:#6b7280;">예: "청바지" → "데님팬츠"(SAME) 상품도 함께 노출</div>
+        </div>
+        <div style="padding:10px 12px;background:#fef2f2;border-radius:8px;">
+          <div style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:4px;">Tier 2 — SIMILAR 폴백</div>
+          <div style="font-size:12px;color:#374151;line-height:1.6;">Tier1 결과가 0건일 때만 실행. SIMILAR 관계 키워드로 확장.</div>
+          <div style="margin-top:6px;font-size:11px;color:#6b7280;">예: "린넨셔츠" Tier1 0건 → "셔츠"(SIMILAR) 상품으로 폴백</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DB 접근 ── -->
+  <div class="card" id="db">
+    <div class="card-title">🗄️ PostgreSQL DB 접근 — danble 읽기/쓰기 분리</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;">읽기 (skq — 분석 단계)</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+            <span style="font-size:16px;flex-shrink:0;">🔐</span>
+            <div style="font-size:13px;color:#374151;">
+              <strong>자격증명 파일</strong><br>
+              <code style="font-size:11px;">~/.config/sq/db.env</code><br>
+              <span style="color:#6b7280;font-size:12px;">skq와 sq가 공유 · read-only 계정</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">
+            <span style="font-size:16px;flex-shrink:0;">🚫</span>
+            <div style="font-size:13px;color:#374151;">
+              <strong>SELECT only</strong><br>
+              <span style="color:#6b7280;font-size:12px;">skq 에이전트는 INSERT/UPDATE 불가 → SQL 파일로만 출력</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;">쓰기 (ship — 적용 단계)</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;">
+            <span style="font-size:16px;flex-shrink:0;">✏️</span>
+            <div style="font-size:13px;color:#374151;">
+              <strong>별도 쓰기 계정</strong><br>
+              <code style="font-size:11px;">PGWRITE_USER / PGWRITE_PASSWORD</code><br>
+              <span style="color:#6b7280;font-size:12px;">ship이 db.env에서 자동 선택, 없으면 일반 계정으로 fallback</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;">
+            <span style="font-size:16px;flex-shrink:0;">⚠️</span>
+            <div style="font-size:13px;color:#374151;">
+              <strong>수동 확인 필수</strong><br>
+              <span style="color:#6b7280;font-size:12px;">'ship' 타이핑으로 재확인 후 psql 실행. 트랜잭션 실패 시 자동 롤백.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:20px;">
+      <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;">skq가 조회하는 주요 테이블</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+          <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#7c3aed;font-weight:600;min-width:200px;">search_keywords</span>
+          <span style="font-size:12px;color:#6b7280;">키워드 사전 · priority · keyword_type</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+          <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#7c3aed;font-weight:600;min-width:200px;">search_keyword_relations</span>
+          <span style="font-size:12px;color:#6b7280;">동의어·유사어 관계 (SAME/SIMILAR)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+          <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#7c3aed;font-weight:600;min-width:200px;">search_keyword_rankings</span>
+          <span style="font-size:12px;color:#6b7280;">result_product_count · rank · score</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+          <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#7c3aed;font-weight:600;min-width:200px;">search_brand_keywords</span>
+          <span style="font-size:12px;color:#6b7280;">브랜드 발골사전 (brand_id)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+          <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#7c3aed;font-weight:600;min-width:200px;">search_category_keywords</span>
+          <span style="font-size:12px;color:#6b7280;">카테고리 발골사전 (product_midtype_ids)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb;">
+          <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#7c3aed;font-weight:600;min-width:200px;">search_color_keywords</span>
+          <span style="font-size:12px;color:#6b7280;">색상 발골사전 (variant_ids)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 사용법 ── -->
+  <div class="card" id="usage">
+    <div class="card-title">사용법</div>
+    <div class="code"><span class="cm"># 최초 1회 — skq 환경 셋업 (sq-setup과 DB 자격증명 공유)</span>
+<span class="cv">bash</span> ~/development/tmux/skq/skq-setup
+
+<span class="cm"># 기본 실행 — 전체 검색 키워드 품질 개선</span>
+<span class="cv">skq</span>
+
+<span class="cm"># 범위 지정 실행</span>
+<span class="cv">skq</span> <span class="cs">"ZERO_RESULT 키워드 집중 개선 — 0건 키워드 top 20"</span>
+<span class="cv">skq</span> <span class="cs">"rank 50위 이내 키워드 priority 최적화"</span>
+<span class="cv">skq</span> <span class="cs">"브랜드 키워드 발골사전 미연결 일괄 해소"</span>
+
+<span class="cm"># SQL 결과 확인 후 적용</span>
+<span class="cv">ship</span> --list          <span class="cm"># 적용 가능한 skq 결과 목록</span>
+<span class="cv">ship</span> --dry-run       <span class="cm"># 최신 결과 SQL 미리보기 (DB 미적용)</span>
+<span class="cv">ship</span>                 <span class="cm"># 최신 결과 적용 ('ship' 입력 재확인)</span>
+<span class="cv">ship</span> skq-20260504-153000  <span class="cm"># 특정 실행 결과 적용</span></div>
+
+    <div style="margin-top:16px;">
+      <div class="summary-box">
+        <div class="s-title">핵심 특징</div>
+        <ul class="summary-list">
+          <li><strong>6-Phase 직렬 파이프라인</strong> — A→B→C→D→E→F 순으로 실행. Phase D만 5개 에이전트가 병렬 실행.</li>
+          <li><strong>tmux 패널 모드</strong> — 실행 중인 에이전트가 오른쪽 패널에 실시간으로 표시. Phase 완료 시 패널 자동 정리.</li>
+          <li><strong>비 tmux 환경 지원</strong> — 백그라운드 세션 모드로 자동 전환. done 플래그 폴링 방식은 동일.</li>
+          <li><strong>도메인 집중 토론</strong> — Phase C Debate는 SQL 안전성이 아닌 검색 의미 정확성(타입·동의어 관계·발골 ID)만 검증.</li>
+          <li><strong>자율 필터링</strong> — 각 D-Phase 에이전트가 자신의 diagnosis_code를 스스로 필터링. 해당 없으면 빈 SQL + 자동 완료.</li>
+          <li><strong>SQL 적용 순서 보장</strong> — Phase E에서 UPDATE_PRIORITY → UPDATE_TYPE → INSERT_SYNONYM → UPDATE_ANCHOR 순으로 통합. 토큰 매칭 기준 먼저 확정.</li>
+          <li><strong>읽기/쓰기 계정 분리</strong> — skq 에이전트는 read-only로만 조회. ship 명령어만 쓰기 계정으로 실제 적용.</li>
+          <li><strong>수동 적용 확인</strong> — ship 실행 시 'ship' 재입력으로 의도 재확인. 실패 시 트랜잭션 자동 롤백.</li>
+          <li><strong>롤백 SQL 포함</strong> — ship-manifest.md에 각 변경사항 롤백 SQL 자동 포함.</li>
+          <li><strong>sq와 자격증명 공유</strong> — <code>~/.config/sq/db.env</code>를 그대로 사용. skq-setup이 sq-setup 설정을 재활용.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /.main -->
+</div><!-- /.layout -->
+
+<footer class="site-footer">
+  Built with <a href="https://claude.ai" target="_blank">Claude Agent Teams</a> · danble
+</footer>
+
+</body>
+</html>

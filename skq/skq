@@ -1,45 +1,47 @@
 #!/usr/bin/env bash
-# skq — Search Keyword Quality 개선 워크플로 (6-Wave 직렬 멀티에이전트)
+# skq — Search Keyword Quality 개선 워크플로 (6-Phase 직렬 멀티에이전트)
 # 사용법: skq              → 전체 검색 키워드 품질 자동 개선
 #         skq "특정 범위"  → 범위/목적을 지정해 실행
 #
 # 워크플로:
-#   Wave A: Discovery    — DB 기반 개선 대상 키워드 자동 발굴
-#   Wave B: Analysis     — 각 키워드별 진단 코드 + 구체적 수정 방향 제안
-#   Wave C: Plan Debate  — 수정 방향의 도메인 적합성 토론 (Red/Blue/Judge)
-#   Wave D: Propose      — 승인된 플랜 기반 병렬 SQL 생성 (5 에이전트)
-#   Wave E: Ship-Ready   — 최종 SQL 패키징 + 매니페스트 생성
-#   Wave F: Validate     — 예상 개선도 추정 + 리포트
+#   Phase A: Discovery    — DB 기반 개선 대상 키워드 자동 발굴
+#   Phase B: Analysis     — 각 키워드별 진단 코드 + 구체적 수정 방향 제안
+#   Phase C: Plan Debate  — 수정 방향의 도메인 적합성 토론 (Red/Blue/Judge)
+#   Phase D: Propose      — 승인된 플랜 기반 병렬 SQL 생성 (5 에이전트)
+#   Phase E: Ship-Ready   — 최종 SQL 패키징 + 매니페스트 생성
+#   Phase F: Validate     — 예상 개선도 추정 + 리포트
 #
-# 출력: .agent/skq-{DATE}/ 폴더 내 각 Wave 결과물
+# tmux 환경: Phase별 패널로 시각적 병렬 실행
+# 비 tmux 환경: 백그라운드 세션으로 실행
+#
+# 출력: docs/reports/skq-{DATE}/ 폴더
 # 적용: ship 명령어로 ship.sql 검토 후 실행
 
 set -euo pipefail
 
 SCOPE="${1:-전체 검색 키워드 품질 개선 — 검색 정확도 및 결과 노출 향상}"
 
-# ── 날짜 / 실행 ID ────────────────────────────────────────────
+SKQ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── 실행 ID / 디렉토리 ────────────────────────────────────────
 RUN_DATE="$(date +%Y%m%d-%H%M%S)"
 RUN_ID="skq-${RUN_DATE}"
-FLAG_DIR=".agent/${RUN_ID}"
-OUTPUT_DIR="docs/reports/${RUN_ID}"
+FLAG_DIR="${SKQ_DIR}/.agent/${RUN_ID}"
+OUTPUT_DIR="${SKQ_DIR}/docs/reports/${RUN_ID}"
 
-mkdir -p "${FLAG_DIR}" "${OUTPUT_DIR}"
+PHASE_D_SHARED="${FLAG_DIR}/phase_d_shared"
+mkdir -p "${FLAG_DIR}" "${OUTPUT_DIR}" "${PHASE_D_SHARED}"
 
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  🔍 SKQ — Search Keyword Quality 개선 워크플로"
-echo "  실행 ID: ${RUN_ID}"
-echo "  범위: ${SCOPE}"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+PANE_ID_FILE="${FLAG_DIR}/pane_ids.txt"
+touch "${PANE_ID_FILE}"
 
-# ── PostgreSQL 접속 정보 ──────────────────────────────────────
+# ── DB 자격증명 ───────────────────────────────────────────────
 SQ_DB_ENV="${HOME}/.config/sq/db.env"
 if [[ -f "${SQ_DB_ENV}" ]]; then
   # shellcheck source=/dev/null
   source "${SQ_DB_ENV}"
 else
-  echo "⚠️  DB 자격증명 파일이 없습니다: ${SQ_DB_ENV}"
+  echo "❌ DB 자격증명 파일이 없습니다: ${SQ_DB_ENV}"
   echo "   skq-setup을 먼저 실행하세요."
   exit 1
 fi
@@ -52,70 +54,184 @@ PGPORT="${PGPORT:-5432}"
 PGSSLMODE="${PGSSLMODE:-require}"
 export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
 
-# ── 공통 문서 컨텍스트 ────────────────────────────────────────
-SKQ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ── 공통 문서 컨텍스트 경로 (에이전트가 Read로 직접 읽음) ─────
 PIPELINE_DOC="${SKQ_DIR}/docs/search-pipeline.md"
 SCHEMA_DOC="${SKQ_DIR}/docs/db-schema.md"
 
-DOCS_CONTEXT=""
-if [[ -f "${PIPELINE_DOC}" ]]; then
-  DOCS_CONTEXT+="$(cat "${PIPELINE_DOC}")"$'\n\n'
+# ── tmux 환경 감지 ────────────────────────────────────────────
+IN_TMUX=0
+MAIN_WIN=""
+MAIN_PANE=""
+if [[ -n "${TMUX:-}" ]]; then
+  IN_TMUX=1
+  MAIN_WIN=$(tmux display-message -p '#{window_id}')
+  MAIN_PANE=$(tmux display-message -p '#{pane_id}')
 fi
-if [[ -f "${SCHEMA_DOC}" ]]; then
-  DOCS_CONTEXT+="$(cat "${SCHEMA_DOC}")"
-fi
 
-# ── DB 접근 컨텍스트 ─────────────────────────────────────────
-DB_CONTEXT=$(cat << 'DBEOF'
-## PostgreSQL DB 접근 (danble read-only replica)
-
-환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있음.
-접속 명령 예시:
-  PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST}" -U "${PGUSER}" -d "${PGDATABASE}" -p "${PGPORT}" --no-password -c "SELECT ..."
-
-### 주요 테이블
-| 테이블 | 설명 |
-|--------|------|
-| `search_keywords` | 검색어 사전 (keyword, keyword_type, category_main, priority, result_product_count, rank) |
-| `search_keyword_relations` | 동의어·유사어 관계 (relation_type: SAME=동의어, SIMILAR=유사어) |
-| `search_brand_keywords` | 브랜드 발골사전 (brand_id, search_keyword_id) |
-| `search_category_keywords` | 카테고리 발골사전 (product_midtype_ids, product_subtype_ids, requires_name_search) |
-| `search_color_keywords` | 색상 발골사전 (variant_ids) |
-| `search_keyword_rankings` | 키워드 통계 (result_product_count, rank, md_score, auto_score) |
-
-### KeywordType: BRAND | CATEGORY | COLOR | ETC
-### KeywordRelationType: SAME (동의어, Tier1+2) | SIMILAR (유사어, Tier2만)
-
-⚠️ SELECT만 가능 (read-only). INSERT/UPDATE/DELETE 불가 → SQL 파일로 출력.
-DBEOF
-)
+PHASE_ANCHOR_PANE=""   # 현재 웨이브의 첫 번째 패널 (세로 분할 기준점)
 
 # ═══════════════════════════════════════════════════════════════
-# Wave A — Discovery: DB 기반 개선 대상 키워드 발굴
+# 헬퍼 함수
+# ═══════════════════════════════════════════════════════════════
+
+# 에이전트 실행 스크립트 생성
+# write_agent_script <script_path> <prompt_path> [allowed_tools] [done_flag]
+#   allowed_tools: 기본값 "Bash,Read,Glob,Grep" (읽기 전용)
+#   done_flag:     완료 시 touch할 파일 경로 (SubagentStop Hook 역할)
+write_agent_script() {
+  local SCRIPT_PATH="$1"
+  local PROMPT_PATH="$2"
+  local ALLOWED_TOOLS="${3:-Bash,Read,Glob,Grep}"
+  local DONE_FLAG="${4:-}"
+
+  cat > "${SCRIPT_PATH}" << AGENTSCRIPT
+#!/usr/bin/env bash
+set -euo pipefail
+source "${SQ_DB_ENV}"
+export PGHOST PGDATABASE PGUSER PGPASSWORD PGPORT PGSSLMODE
+cd "${SKQ_DIR}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  에이전트 시작: \$(basename "${SCRIPT_PATH}" .sh)"
+echo "  툴 권한: ${ALLOWED_TOOLS}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+claude --dangerously-skip-permissions \\
+  --allowedTools "${ALLOWED_TOOLS}" \\
+  -p "\$(cat '${PROMPT_PATH}')" \\
+  2>&1
+EXIT_CODE=\$?
+# [Hook: SubagentStop] 에이전트 종료 시 완료 플래그 자동 기록
+if [[ -n "${DONE_FLAG}" ]]; then
+  echo "\${EXIT_CODE}" > "${DONE_FLAG}.exit"
+  touch "${DONE_FLAG}"
+fi
+AGENTSCRIPT
+  chmod +x "${SCRIPT_PATH}"
+}
+
+# tmux 패널 실행 또는 백그라운드 세션 실행
+# launch_agent <agent_name> <emoji> <script_path> <is_first_in_phase>
+# is_first_in_phase: "1"이면 가로 분할, "0"이면 세로 분할
+launch_agent() {
+  local AGENT_NAME="$1"
+  local EMOJI="$2"
+  local SCRIPT_PATH="$3"
+  local IS_FIRST="${4:-1}"
+
+  if [[ "${IN_TMUX}" -eq 1 ]]; then
+    local NEW_PANE
+    if [[ "${IS_FIRST}" == "1" ]]; then
+      # 첫 에이전트: 메인 패널 오른쪽에 가로 분할 (새 Phase 컬럼)
+      tmux split-window -h -t "${MAIN_PANE}" -c "${SKQ_DIR}"
+      NEW_PANE=$(tmux display-message -p '#{pane_id}')
+      PHASE_ANCHOR_PANE="${NEW_PANE}"
+    else
+      # 같은 Phase 내 추가 에이전트: 첫 패널 기준 세로 분할
+      NEW_PANE=$(tmux split-window -v -t "${PHASE_ANCHOR_PANE}" -c "${SKQ_DIR}" -P -F '#{pane_id}')
+    fi
+    echo "${NEW_PANE}" >> "${PANE_ID_FILE}"
+    tmux select-pane -t "${NEW_PANE}" -T "${EMOJI} ${AGENT_NAME}"
+    tmux send-keys -t "${NEW_PANE}" "bash '${SCRIPT_PATH}'" Enter
+    tmux select-layout -t "${MAIN_WIN}" main-vertical 2>/dev/null || true
+    tmux select-pane -t "${MAIN_PANE}" 2>/dev/null || true
+  else
+    # 비 tmux 환경: 백그라운드 세션 실행
+    local SESSION="skq-${AGENT_NAME}-${RUN_DATE}"
+    tmux new-session -d -s "${SESSION}" -c "${SKQ_DIR}" "bash '${SCRIPT_PATH}'; sleep 2" 2>/dev/null || \
+      bash "${SCRIPT_PATH}" &
+    echo "${SESSION}" >> "${FLAG_DIR}/agent_sessions.txt"
+    echo "  └─ ${EMOJI} ${AGENT_NAME} 백그라운드 시작"
+  fi
+}
+
+# 완료 플래그 폴링 대기
+# wait_phase <label> <done_flag...>
+wait_phase() {
+  local LABEL="$1"; shift
+  local FLAGS=("$@")
+  local TOTAL="${#FLAGS[@]}"
+  local ELAPSED=0
+  local MAX_WAIT=600
+
+  while [[ "${ELAPSED}" -lt "${MAX_WAIT}" ]]; do
+    local DONE=0
+    for flag in "${FLAGS[@]}"; do
+      [[ -f "${FLAG_DIR}/${flag}" ]] && DONE=$((DONE + 1)) || true
+    done
+    if [[ "${DONE}" -ge "${TOTAL}" ]]; then
+      printf "\r  ✅ %-30s 완료 (%ds)           \n" "${LABEL}" "${ELAPSED}"
+      return 0
+    fi
+    printf "\r  ⏳ %-30s %d/%d 대기 중... (%ds)  " "${LABEL}" "${DONE}" "${TOTAL}" "${ELAPSED}"
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
+  done
+
+  echo ""
+  echo "  ❌ ${LABEL} 타임아웃 (${MAX_WAIT}s)"
+  return 1
+}
+
+# 현재 Phase의 패널/세션 정리
+cleanup_phase() {
+  if [[ "${IN_TMUX}" -eq 1 ]] && [[ -s "${PANE_ID_FILE}" ]]; then
+    while IFS= read -r PANE_ID; do
+      tmux kill-pane -t "${PANE_ID}" 2>/dev/null || true
+    done < "${PANE_ID_FILE}"
+    > "${PANE_ID_FILE}"
+    tmux select-pane -t "${MAIN_PANE}" 2>/dev/null || true
+  fi
+  if [[ -f "${FLAG_DIR}/agent_sessions.txt" ]] && [[ -s "${FLAG_DIR}/agent_sessions.txt" ]]; then
+    while IFS= read -r SESSION; do
+      tmux kill-session -t "${SESSION}" 2>/dev/null || true
+    done < "${FLAG_DIR}/agent_sessions.txt"
+    > "${FLAG_DIR}/agent_sessions.txt"
+  fi
+  PHASE_ANCHOR_PANE=""
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 헤더 출력
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🎯 SKQ — Search Keyword Quality 개선 워크플로"
+echo "  실행 ID: ${RUN_ID}"
+echo "  범위:    ${SCOPE}"
+[[ "${IN_TMUX}" -eq 1 ]] && echo "  모드:    tmux 패널 모드" || echo "  모드:    백그라운드 세션 모드"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ═══════════════════════════════════════════════════════════════
+# Phase A — Discovery
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  Wave A — Discovery: 개선 대상 키워드 발굴               │"
+echo "│  Phase A — Discovery: 개선 대상 키워드 발굴               │"
 echo "└─────────────────────────────────────────────────────────┘"
 
-WAVE_A_PROMPT=$(cat << WAVEAEOF
-# SKQ Wave A — Discovery Agent
+cat > "${FLAG_DIR}/prompt_phase_A.txt" << 'PHASEAEOF_MARKER'
+# SKQ Phase A — Discovery Agent
 
 당신은 Danble 검색 키워드 품질 개선을 위한 Discovery 에이전트입니다.
 목표: DB에서 검색 품질 개선이 필요한 키워드를 체계적으로 발굴합니다.
+PHASEAEOF_MARKER
 
+# 변수 치환이 필요한 부분을 별도로 추가
+cat >> "${FLAG_DIR}/prompt_phase_A.txt" << PHASEAEOF
 ## 실행 범위
 ${SCOPE}
 
-## 검색 파이프라인 & DB 스키마
-${DOCS_CONTEXT}
+## 참고 문서 (Read 툴로 읽으세요)
+- 검색 파이프라인: ${PIPELINE_DOC}
+- DB 스키마: ${SCHEMA_DOC}
 
-## DB 접근
-${DB_CONTEXT}
+## DB 접근 (Bash 툴로 psql 실행)
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT, PGSSLMODE)는 이미 export 되어 있음.
+접속 예시: PGPASSWORD="\${PGPASSWORD}" psql -h "\${PGHOST}" -U "\${PGUSER}" -d "\${PGDATABASE}" -p "\${PGPORT}" --no-password -c "SELECT ..."
+⚠️ SELECT만 가능 (read-only).
 
-## 발굴 쿼리 (4종 실행)
+## 발굴 쿼리 5종 실행
 
-### Q1: ZERO_RESULT 후보 — 결과 0건 키워드 (사전 등록은 되어 있지만 결과가 없음)
+### Q1: ZERO_RESULT — 결과 0건 키워드
 \`\`\`sql
 SELECT sk.id, sk.keyword, sk.keyword_type, sk.category_main,
        skr.result_product_count, sk.rank
@@ -127,7 +243,7 @@ ORDER BY sk.rank ASC NULLS LAST
 LIMIT 30;
 \`\`\`
 
-### Q2: ETC_TYPE 후보 — keyword_type이 분류 불가 상태인 키워드
+### Q2: ETC_TYPE — keyword_type이 ETC인 키워드
 \`\`\`sql
 SELECT sk.id, sk.keyword, sk.keyword_type, sk.category_main,
        skr.result_product_count, sk.rank
@@ -139,7 +255,7 @@ ORDER BY sk.rank ASC NULLS LAST
 LIMIT 30;
 \`\`\`
 
-### Q3: NO_SYNONYM 후보 — SAME 동의어가 없어 Tier1 검색 범위가 자기 자신뿐인 키워드
+### Q3: NO_SYNONYM — SAME 동의어가 없는 키워드
 \`\`\`sql
 SELECT sk.id, sk.keyword, sk.keyword_type, skr.result_product_count, sk.rank
 FROM search_keywords sk
@@ -155,7 +271,7 @@ ORDER BY sk.rank ASC NULLS LAST
 LIMIT 30;
 \`\`\`
 
-### Q4: POSSIBLE_FALLBACK 후보 — BRAND/CATEGORY/COLOR인데 발골사전에 연결이 없어 텍스트 검색만 사용되는 키워드
+### Q4: POSSIBLE_FALLBACK — 발골사전 미연결 키워드
 \`\`\`sql
 SELECT sk.id, sk.keyword, sk.keyword_type, sk.category_main,
        skr.result_product_count, sk.rank
@@ -174,9 +290,9 @@ ORDER BY sk.rank ASC NULLS LAST
 LIMIT 30;
 \`\`\`
 
-### Q5: WRONG_PRIORITY 후보 — 검색 상위 키워드인데 priority가 기본값(100)이거나, 토큰이 겹치는 키워드 간 우선순위 역전이 의심되는 경우
+### Q5: WRONG_PRIORITY — 우선순위 역전 의심 키워드
 \`\`\`sql
--- 5-A: rank 상위인데 priority가 기본값(100)인 키워드 — 중요 키워드임에도 낮은 우선순위
+-- 5-A: rank 상위인데 priority=100(기본값)
 SELECT sk.id, sk.keyword, sk.keyword_type, sk.priority, sk.rank,
        skr.result_product_count
 FROM search_keywords sk
@@ -188,8 +304,7 @@ WHERE sk.is_deleted = false
 ORDER BY sk.rank ASC
 LIMIT 20;
 
--- 5-B: 서로 토큰이 포함 관계인 키워드 쌍 (priority 충돌 위험)
--- 예: "자라"(BRAND)와 "자라체크"(CATEGORY) — 짧은 쪽이 priority가 낮으면 긴 쪽을 덮어씀
+-- 5-B: 토큰 포함 관계 priority 충돌 쌍
 SELECT a.id AS id_a, a.keyword AS keyword_a, a.keyword_type AS type_a, a.priority AS priority_a, a.rank AS rank_a,
        b.id AS id_b, b.keyword AS keyword_b, b.keyword_type AS type_b, b.priority AS priority_b, b.rank AS rank_b
 FROM search_keywords a
@@ -198,7 +313,7 @@ JOIN search_keywords b
   AND b.id != a.id
   AND a.is_deleted = false
   AND b.is_deleted = false
-  AND a.priority <= b.priority     -- 짧은 키워드(a)가 긴 키워드(b)보다 우선순위가 같거나 높은 역전 케이스
+  AND a.priority <= b.priority
   AND length(a.keyword) < length(b.keyword)
 ORDER BY a.rank ASC NULLS LAST
 LIMIT 20;
@@ -206,9 +321,8 @@ LIMIT 20;
 
 ## 출력 요구사항
 
-1. 위 4개 쿼리를 Bash 툴로 직접 실행
-2. 결과를 분석하여 개선 우선순위 결정 (rank 낮을수록 = 검색량 많을수록 우선)
-3. 다음 파일 생성:
+1. 위 5개 쿼리를 Bash 툴로 직접 실행
+2. 결과 분석 후 다음 파일 생성:
 
 ### \`${FLAG_DIR}/discovery.json\`
 \`\`\`json
@@ -216,81 +330,73 @@ LIMIT 20;
   "run_id": "${RUN_ID}",
   "scope": "${SCOPE}",
   "discovered_at": "ISO 날짜",
-  "zero_result": [
-    {"id": 1, "keyword": "린넨셔츠", "keyword_type": "CATEGORY", "rank": 5, "result_product_count": 0}
-  ],
-  "etc_type": [
-    {"id": 2, "keyword": "Y2K", "rank": 15, "result_product_count": 80}
-  ],
-  "no_synonym": [
-    {"id": 3, "keyword": "청바지", "keyword_type": "CATEGORY", "rank": 3, "result_product_count": 120}
-  ],
-  "possible_fallback": [
-    {"id": 4, "keyword": "ZARA", "keyword_type": "BRAND", "rank": 8, "result_product_count": 200}
-  ],
+  "zero_result": [{"id": 1, "keyword": "린넨셔츠", "keyword_type": "CATEGORY", "rank": 5, "result_product_count": 0}],
+  "etc_type": [{"id": 2, "keyword": "Y2K", "rank": 15, "result_product_count": 80}],
+  "no_synonym": [{"id": 3, "keyword": "청바지", "keyword_type": "CATEGORY", "rank": 3, "result_product_count": 120}],
+  "possible_fallback": [{"id": 4, "keyword": "ZARA", "keyword_type": "BRAND", "rank": 8, "result_product_count": 200}],
   "wrong_priority": [
-    {"id": 5, "keyword": "청바지", "keyword_type": "CATEGORY", "priority": 100, "rank": 3, "conflict_with": null},
-    {"id": 6, "keyword": "자라", "keyword_type": "BRAND", "priority": 50, "rank": 12, "conflict_with": {"id": 7, "keyword": "자라체크", "priority": 50}}
+    {"id": 5, "keyword": "청바지", "priority": 100, "rank": 3, "conflict_with": null},
+    {"id": 6, "keyword": "자라", "priority": 50, "rank": 12, "conflict_with": {"id": 7, "keyword": "자라체크", "priority": 50}}
   ]
 }
 \`\`\`
 
-### \`${OUTPUT_DIR}/wave-a-discovery.md\`
-발굴 결과 분석 요약 리포트.
+### \`${OUTPUT_DIR}/phase-a-discovery.md\`
+발굴 결과 요약 리포트 (발굴 건수, 우선순위 판단 근거)
 
 4. 완료 후 반드시 실행:
 \`\`\`bash
-touch "${FLAG_DIR}/wave_A_done"
+touch "${FLAG_DIR}/phase_A_done"
 \`\`\`
-WAVEAEOF
-)
+PHASEAEOF
 
-echo "${WAVE_A_PROMPT}" > "${FLAG_DIR}/wave_a_prompt.md"
-claude --dangerously-skip-permissions -p "${WAVE_A_PROMPT}" &
-WAVE_A_PID=$!
+write_agent_script "${FLAG_DIR}/run_phase_A.sh" "${FLAG_DIR}/prompt_phase_A.txt" \
+  "Bash,Read,Glob,Grep" "${FLAG_DIR}/phase_A_done"
+launch_agent "phase_A_discovery" "🔍" "${FLAG_DIR}/run_phase_A.sh" "1"
 
-echo "     Wave A 에이전트 시작 (PID: ${WAVE_A_PID})"
-wait "${WAVE_A_PID}" || true
+wait_phase "Phase A — Discovery" "phase_A_done"
+cleanup_phase
 
-if [[ ! -f "${FLAG_DIR}/wave_A_done" ]]; then
-  echo "     ❌ Wave A 실패 — discovery.json 미생성"
+if [[ ! -f "${FLAG_DIR}/phase_A_done" ]]; then
+  echo "  ❌ Phase A 실패 — discovery.json 미생성. 종료합니다."
   exit 1
 fi
-echo "     ✅ Wave A 완료"
 
 # ═══════════════════════════════════════════════════════════════
-# Wave B — Analysis: 각 키워드별 구체적 수정 방향 제안
+# Phase B — Analysis
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  Wave B — Analysis: 진단 + 구체적 수정 방향 제안         │"
+echo "│  Phase B — Analysis: 진단 + 구체적 수정 방향 제안         │"
 echo "└─────────────────────────────────────────────────────────┘"
 
 DISCOVERY_DATA="$(cat "${FLAG_DIR}/discovery.json" 2>/dev/null || echo '{}')"
 
-WAVE_B_PROMPT=$(cat << WAVEBEOF
-# SKQ Wave B — Analysis Agent
+cat > "${FLAG_DIR}/prompt_phase_B.txt" << 'PHASEBEOF_MARKER'
+# SKQ Phase B — Analysis Agent
 
 당신은 Danble 검색 키워드 분석 전문 에이전트입니다.
-Wave A에서 발굴된 각 키워드에 대해, 파이프라인을 기반으로 진단하고
-Wave C Debate에서 검토할 수 있도록 **구체적이고 검증 가능한 수정 방향**을 제안합니다.
+Phase A에서 발굴된 각 키워드에 대해, 파이프라인을 기반으로 진단하고
+Phase C Debate에서 검토할 수 있도록 **구체적이고 검증 가능한 수정 방향**을 제안합니다.
+PHASEBEOF_MARKER
 
-## Wave A 발굴 결과
+cat >> "${FLAG_DIR}/prompt_phase_B.txt" << PHASEBEOF
+## Phase A 발굴 결과
 \`\`\`json
 ${DISCOVERY_DATA}
 \`\`\`
 
-## 검색 파이프라인 & DB 스키마
-${DOCS_CONTEXT}
+## 참고 문서 (Read 툴로 읽으세요)
+- 검색 파이프라인: ${PIPELINE_DOC}
+- DB 스키마: ${SCHEMA_DOC}
 
-## DB 접근
-${DB_CONTEXT}
+## DB 접근 (Bash 툴로 psql 실행)
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있음.
+⚠️ SELECT만 가능 (read-only).
 
 ## 분석 원칙
 
 각 키워드에 대해 DB를 직접 조회하며 다음을 결정합니다:
-
-### diagnosis_code → 구체적 제안값 결정
 
 | diagnosis_code | 결정해야 할 구체값 |
 |---------------|-----------------|
@@ -303,26 +409,16 @@ ${DB_CONTEXT}
 
 ### WRONG_PRIORITY 분석 기준
 
-priority는 토큰 매칭 시 가장 먼저 적용되는 정렬 키입니다 (낮을수록 먼저 매칭).
+priority는 토큰 매칭 시 가장 먼저 적용되는 정렬 키 (낮을수록 먼저 매칭).
 
 **케이스 1 — rank 기반 중요도 역전:**
-rank가 낮은(검색량 많은) 키워드인데 priority=100(기본값)이면,
-덜 중요한 키워드보다 늦게 매칭될 수 있음.
+rank가 낮은(검색량 많은) 키워드인데 priority=100(기본값)이면 덜 중요한 키워드보다 늦게 매칭될 수 있음.
 → rank ÷ 2 를 초기 기준으로, 다른 키워드와 충돌 없는 범위에서 제안
 
 **케이스 2 — 토큰 포함 관계 충돌:**
-"자라"(priority=50) + "자라체크"(priority=50) → 동점이면 토큰 커버 수(더 많은 토큰 커버가 우선)로 해소됨.
+"자라"(priority=50) + "자라체크"(priority=50) → 동점이면 토큰 커버 수로 해소됨.
 단, "자라"가 priority가 더 낮으면(숫자 작으면) "자라체크" 쿼리에서도 "자라"가 먼저 매칭돼 브랜드 필터로 잘못 처리됨.
 → 구체 키워드(긴 것)의 priority를 포괄 키워드(짧은 것)보다 낮게(숫자 작게) 설정
-
-추가 조회 예시:
-\`\`\`sql
--- 특정 키워드와 토큰 충돌 가능한 키워드들의 priority 현황
-SELECT id, keyword, keyword_type, priority, rank
-FROM search_keywords
-WHERE keyword ILIKE '%{keyword}%' AND is_deleted = false
-ORDER BY priority ASC;
-\`\`\`
 
 ### 참고 쿼리 예시
 \`\`\`sql
@@ -341,14 +437,17 @@ SELECT skrel.relation_type, t.keyword
 FROM search_keyword_relations skrel
 JOIN search_keywords t ON t.id = skrel.target_keyword_id
 WHERE skrel.source_keyword_id = {id};
+
+-- priority 충돌 현황 조회
+SELECT id, keyword, keyword_type, priority, rank
+FROM search_keywords
+WHERE keyword ILIKE '%{keyword}%' AND is_deleted = false
+ORDER BY priority ASC;
 \`\`\`
 
 ## 출력 요구사항
 
 ### \`${FLAG_DIR}/analysis.json\`
-각 키워드별로 **구체적인 수정값**이 포함된 제안 목록.
-Wave C Debate 에이전트가 이 값의 적합성을 검토합니다.
-
 \`\`\`json
 {
   "proposals": [
@@ -364,36 +463,6 @@ Wave C Debate 에이전트가 이 값의 적합성을 검토합니다.
       "db_evidence": "SELECT로 확인한 '셔츠' 상품 수: 830건"
     },
     {
-      "id": 2,
-      "keyword": "Y2K",
-      "diagnosis_code": "ETC_TYPE",
-      "fix_type": "UPDATE_KEYWORD_TYPE",
-      "proposed_keyword_type": "CATEGORY",
-      "proposed_category_main": "ETC",
-      "rationale": "Y2K는 패션 스타일 카테고리. 현재 ETC_TYPE으로 발골 실패 중.",
-      "db_evidence": "product_midtypes에서 'Y2K' 관련 중분류 미발견 → category_main=ETC 적합"
-    },
-    {
-      "id": 3,
-      "keyword": "청바지",
-      "diagnosis_code": "NO_SYNONYM",
-      "fix_type": "INSERT_SAME_SYNONYM",
-      "target_keyword": "데님팬츠",
-      "target_keyword_id": 156,
-      "relation_type": "SAME",
-      "rationale": "청바지의 SAME 동의어 없음. '데님팬츠'(id=156)와 동의어 관계로 Tier1 확장.",
-      "db_evidence": "search_keywords에서 '데님팬츠' 확인 (id=156, result_product_count=450)"
-    },
-    {
-      "id": 4,
-      "keyword": "ZARA",
-      "diagnosis_code": "POSSIBLE_FALLBACK",
-      "fix_type": "UPDATE_BRAND_ID",
-      "proposed_brand_id": 88,
-      "rationale": "ZARA 키워드가 브랜드 발골사전에 연결 안 됨. brands 테이블에서 ZARA(id=88) 확인.",
-      "db_evidence": "SELECT id, name FROM brands WHERE name ILIKE '%ZARA%' → id=88, name='ZARA'"
-    },
-    {
       "id": 5,
       "keyword": "청바지",
       "diagnosis_code": "WRONG_PRIORITY",
@@ -401,97 +470,83 @@ Wave C Debate 에이전트가 이 값의 적합성을 검토합니다.
       "current_priority": 100,
       "proposed_priority": 10,
       "conflict_keyword": null,
-      "rationale": "rank=3으로 최상위 검색어인데 priority=100(기본값). 중요 키워드가 후순위로 밀려남.",
-      "db_evidence": "rank=3 확인. 동일 토큰 영역 충돌 키워드 없음 → priority=10 제안"
-    },
-    {
-      "id": 6,
-      "keyword": "자라",
-      "diagnosis_code": "WRONG_PRIORITY",
-      "fix_type": "UPDATE_PRIORITY",
-      "current_priority": 50,
-      "proposed_priority": 80,
-      "conflict_keyword": {"id": 7, "keyword": "자라체크", "current_priority": 50},
-      "rationale": "자라(BRAND, priority=50)와 자라체크(CATEGORY, priority=50) 동점. '자라체크' 쿼리 시 자라가 먼저 매칭돼 브랜드 필터로 잘못 처리됨. 자라의 priority를 높여(숫자 크게) 자라체크가 우선 매칭되도록.",
-      "db_evidence": "5-B 쿼리로 충돌 확인. 자라체크 단독 쿼리 시 BRAND 시나리오로 분류되는 현상"
+      "rationale": "rank=3으로 최상위 검색어인데 priority=100(기본값).",
+      "db_evidence": "rank=3 확인. 동일 토큰 영역 충돌 키워드 없음"
     }
   ]
 }
 \`\`\`
 
-### \`${OUTPUT_DIR}/wave-b-analysis.md\`
-제안 내용 요약 리포트 (키워드별 진단 이유 + 제안값 근거).
+### \`${OUTPUT_DIR}/phase-b-analysis.md\`
+제안 내용 요약 리포트 (키워드별 진단 이유 + 제안값 근거)
 
 완료 후 반드시 실행:
 \`\`\`bash
-touch "${FLAG_DIR}/wave_B_done"
+touch "${FLAG_DIR}/phase_B_done"
 \`\`\`
-WAVEBEOF
-)
+PHASEBEOF
 
-echo "${WAVE_B_PROMPT}" > "${FLAG_DIR}/wave_b_prompt.md"
-claude --dangerously-skip-permissions -p "${WAVE_B_PROMPT}" &
-WAVE_B_PID=$!
+write_agent_script "${FLAG_DIR}/run_phase_B.sh" "${FLAG_DIR}/prompt_phase_B.txt" \
+  "Bash,Read,Glob,Grep" "${FLAG_DIR}/phase_B_done"
+launch_agent "phase_B_analysis" "🔬" "${FLAG_DIR}/run_phase_B.sh" "1"
 
-echo "     Wave B 에이전트 시작 (PID: ${WAVE_B_PID})"
-wait "${WAVE_B_PID}" || true
+wait_phase "Phase B — Analysis" "phase_B_done"
+cleanup_phase
 
-if [[ ! -f "${FLAG_DIR}/wave_B_done" ]]; then
-  echo "     ❌ Wave B 실패"
+if [[ ! -f "${FLAG_DIR}/phase_B_done" ]]; then
+  echo "  ❌ Phase B 실패 — analysis.json 미생성. 종료합니다."
   exit 1
 fi
-echo "     ✅ Wave B 완료"
 
 # ═══════════════════════════════════════════════════════════════
-# Wave C — Plan Debate: 수정 방향의 도메인 적합성 토론
+# Phase C — Plan Debate
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  Wave C — Plan Debate: 수정 방향 도메인 검증             │"
+echo "│  Phase C — Plan Debate: 수정 방향 도메인 검증             │"
 echo "└─────────────────────────────────────────────────────────┘"
 
 ANALYSIS_DATA="$(cat "${FLAG_DIR}/analysis.json" 2>/dev/null || echo '{}')"
 
-WAVE_C_PROMPT=$(cat << WAVECEOF
-# SKQ Wave C — Plan Debate Agent
+cat > "${FLAG_DIR}/prompt_phase_C.txt" << 'PHASECEOF_MARKER'
+# SKQ Phase C — Plan Debate Agent
 
 당신은 Danble 검색 키워드 수정 계획을 검토하는 토론 에이전트입니다.
-Wave B에서 제안된 각 수정 방향이 **도메인적으로 올바른지** 집중 검토합니다.
+Phase B에서 제안된 각 수정 방향이 **도메인적으로 올바른지** 집중 검토합니다.
 
 토론 주제: "이 수정이 실제 검색 품질을 높이는가? 제안된 값(ID, 동의어, 타입)이 정확한가?"
+PHASECEOF_MARKER
 
-## Wave B 제안 목록
+cat >> "${FLAG_DIR}/prompt_phase_C.txt" << PHASECEOF
+## Phase B 제안 목록
 \`\`\`json
 ${ANALYSIS_DATA}
 \`\`\`
 
-## 검색 파이프라인 & DB 스키마
-${DOCS_CONTEXT}
+## 참고 문서 (Read 툴로 읽으세요)
+- 검색 파이프라인: ${PIPELINE_DOC}
+- DB 스키마: ${SCHEMA_DOC}
 
-## DB 접근 (추가 검증 조회 가능)
-${DB_CONTEXT}
+## DB 접근 (추가 검증 SELECT 가능)
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있음.
+⚠️ SELECT만 가능 (read-only).
 
 ---
 
 ## 토론 구조 (키워드별 순차 진행)
 
-각 proposal에 대해 다음 순서로 검토하세요:
+각 proposal에 대해 순서대로:
 
 ### Red (반론): 이 수정이 틀렸을 수 있는 이유
 검토 관점:
 - **타입 분류 오류**: keyword_type이나 category_main이 실제 패션 도메인에서 맞지 않는가?
-  예) "스트라이프"를 CATEGORY로 분류했지만 실제론 PATTERN이 더 적합한가?
 - **동의어 관계 오류**: SAME으로 제안했지만 실제론 의미 차이가 있어 SIMILAR가 맞지 않는가?
-  예) "청바지"↔"데님팬츠" — 동일한가, 아니면 데님팬츠가 더 넓은 범위인가?
 - **발골 ID 불일치**: 제안된 brand_id나 product_midtype_ids가 실제로 올바른 엔티티를 가리키는가?
-  예) brand_id=88이 실제로 ZARA인지, 아니면 유사 이름의 다른 브랜드인지?
 - **파이프라인 부작용**: 이 변경이 다른 키워드나 시나리오에 의도치 않은 영향을 줄 수 있는가?
   예) CATEGORY > BRAND 우선 규칙 — 브랜드 등록 시 카테고리와 충돌하는가?
 - **커버리지 과잉**: SIMILAR 동의어가 너무 넓어서 관련 없는 상품이 노출될 수 있는가?
-- **priority 변경 연쇄 효과**: priority를 바꾸면 해당 키워드와 토큰이 겹치는 다른 키워드의 매칭 순서가 함께 바뀌는가?
-  예) "자라"의 priority를 올리면, "자라 셔츠" 쿼리에서 "자라" 단독 매칭이 늦춰지는 건 의도된 결과인가?
+- **priority 변경 연쇄 효과**: 이 priority 변경이 다른 키워드의 매칭 순서에 영향을 주는가?
 - **priority 수치 근거**: rank 기반 제안값이 실제 다른 키워드들과 비교해 납득 가능한 수치인가?
-  예) rank=3인 키워드에 priority=10 제안 — 현재 priority=10 이하인 다른 키워드가 몇 개인지 확인했는가?
 
 ### Blue (방어): 제안이 올바른 이유, 또는 수정된 대안
 - Red의 지적이 타당하면 수정된 제안값 제시
@@ -499,7 +554,7 @@ ${DB_CONTEXT}
 - 필요 시 DB를 직접 조회해 추가 근거 확보
 
 ### Judge (판정): 최종 결정
-각 proposal에 대해 다음 중 하나:
+각 proposal에 대해:
 - **APPROVE**: 원안 그대로 SQL 생성 진행
 - **MODIFY(수정 내용)**: 특정 값을 바꿔서 진행 (예: SAME → SIMILAR, brand_id 88 → 91)
 - **REJECT(이유)**: 이 수정은 진행하지 않음
@@ -509,8 +564,6 @@ ${DB_CONTEXT}
 ## 출력 요구사항
 
 ### \`${FLAG_DIR}/debate_plan.json\`
-판정이 반영된 최종 플랜. Wave D에서 이 파일을 기준으로 SQL을 생성합니다.
-
 \`\`\`json
 {
   "debated_at": "ISO 날짜",
@@ -518,24 +571,13 @@ ${DB_CONTEXT}
     {
       "id": 1,
       "keyword": "린넨셔츠",
-      "verdict": "MODIFY",
+      "verdict": "APPROVE",
       "fix_type": "INSERT_SIMILAR_SYNONYM",
       "target_keyword": "셔츠",
       "target_keyword_id": 42,
       "relation_type": "SIMILAR",
-      "verdict_note": "원안 승인. SIMILAR가 적합 — 린넨셔츠는 셔츠의 하위 개념.",
+      "verdict_note": "원안 승인. SIMILAR가 적합.",
       "diagnosis_code": "ZERO_RESULT"
-    },
-    {
-      "id": 3,
-      "keyword": "청바지",
-      "verdict": "MODIFY",
-      "fix_type": "INSERT_SAME_SYNONYM",
-      "target_keyword": "데님팬츠",
-      "target_keyword_id": 156,
-      "relation_type": "SIMILAR",
-      "verdict_note": "SAME → SIMILAR 변경. 청바지는 데님팬츠의 부분집합으로 SAME은 과도함.",
-      "diagnosis_code": "NO_SYNONYM"
     }
   ],
   "rejected_proposals": [
@@ -543,90 +585,98 @@ ${DB_CONTEXT}
       "id": 2,
       "keyword": "Y2K",
       "verdict": "REJECT",
-      "verdict_note": "Y2K는 특정 카테고리가 아닌 스타일 코드. CATEGORY 분류 시 발골 시나리오와 맞지 않음. 추가 분석 필요."
+      "verdict_note": "추가 분석 필요."
     }
   ],
   "debate_summary": {
     "total": 4,
-    "approved": 2,
-    "modified": 1,
+    "approved": 3,
     "rejected": 1
   }
 }
 \`\`\`
 
-### \`${OUTPUT_DIR}/wave-c-debate.md\`
-키워드별 Red/Blue/Judge 토론 전문 기록.
+### \`${OUTPUT_DIR}/phase-c-debate.md\`
+키워드별 Red/Blue/Judge 토론 전문 기록
 
 완료 후 반드시 실행:
 \`\`\`bash
-touch "${FLAG_DIR}/wave_C_done"
+touch "${FLAG_DIR}/phase_C_done"
 \`\`\`
-WAVECEOF
-)
+PHASECEOF
 
-echo "${WAVE_C_PROMPT}" > "${FLAG_DIR}/wave_c_prompt.md"
-claude --dangerously-skip-permissions -p "${WAVE_C_PROMPT}" &
-WAVE_C_PID=$!
+write_agent_script "${FLAG_DIR}/run_phase_C.sh" "${FLAG_DIR}/prompt_phase_C.txt" \
+  "Bash,Read,Glob,Grep" "${FLAG_DIR}/phase_C_done"
+launch_agent "phase_C_debate" "🗣️" "${FLAG_DIR}/run_phase_C.sh" "1"
 
-echo "     Wave C 에이전트 시작 (PID: ${WAVE_C_PID})"
-wait "${WAVE_C_PID}" || true
+wait_phase "Phase C — Plan Debate" "phase_C_done"
+cleanup_phase
 
-if [[ ! -f "${FLAG_DIR}/wave_C_done" ]]; then
-  echo "     ❌ Wave C 실패 — debate_plan.json 미생성"
+if [[ ! -f "${FLAG_DIR}/phase_C_done" ]]; then
+  echo "  ❌ Phase C 실패 — debate_plan.json 미생성. 종료합니다."
   exit 1
 fi
-echo "     ✅ Wave C 완료"
 
 # ═══════════════════════════════════════════════════════════════
-# Wave D — Propose: 승인된 플랜 기반 병렬 SQL 생성 (4 에이전트)
+# Phase D — Propose (5 병렬 에이전트)
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  Wave D — Propose: 승인된 플랜 기반 SQL 생성 (5 병렬)    │"
+echo "│  Phase D — Propose: 승인된 플랜 기반 SQL 생성 (5 병렬)    │"
 echo "└─────────────────────────────────────────────────────────┘"
 
 DEBATE_PLAN="$(cat "${FLAG_DIR}/debate_plan.json" 2>/dev/null || echo '{}')"
 
-# Wave D 공통 컨텍스트
-WAVE_D_COMMON=$(cat << WAVEDCOMMON
-## 공통 컨텍스트
-
-### Wave C 최종 승인 플랜 (APPROVE/MODIFY만 처리)
+# ── Phase D 공통 헤더 (각 에이전트 프롬프트에 주입) ────────────
+PHASE_D_COMMON_HEADER="## Phase C 최종 승인 플랜 (APPROVE/MODIFY만 처리)
 \`\`\`json
 ${DEBATE_PLAN}
 \`\`\`
 
-### DB 스키마 & 파이프라인
-${DOCS_CONTEXT}
+## 참고 문서 (Read 툴로 읽으세요)
+- 검색 파이프라인: ${PIPELINE_DOC}
+- DB 스키마: ${SCHEMA_DOC}
 
-### DB 접근 (실행 전 검증 SELECT용)
-${DB_CONTEXT}
+## DB 접근 (실행 전 검증 SELECT용)
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있음.
+⚠️ SELECT만 가능 (read-only).
 
-### SQL 작성 원칙
+## SQL 작성 원칙
 - debate_plan.json의 \`approved_proposals\` 목록만 처리 (rejected는 완전히 무시)
 - 각 SQL 앞에 -- [keyword] [fix_type] [verdict_note] 주석 필수
 - INSERT ... ON CONFLICT DO NOTHING 또는 WHERE NOT EXISTS로 멱등성 보장
 - BEGIN/COMMIT 트랜잭션으로 묶기
 - 실행 전 검증 SELECT를 주석으로 함께 제공
-WAVEDCOMMON
-)
 
-# ── D1: zero_fixer — ZERO_RESULT 관련 (INSERT_SIMILAR_SYNONYM) ──
-ZERO_FIXER_PROMPT=$(cat << ZEROFIXEOF
-# SKQ Wave D1 — zero_fixer Agent
+## [Agent Teams] Phase D 에이전트 간 조율
+공유 디렉토리: ${PHASE_D_SHARED}/
+
+**작업 시작 전** — 다른 에이전트가 처리한 keyword_id 확인 (중복 방지):
+\`\`\`bash
+ls "${PHASE_D_SHARED}/"*.json 2>/dev/null && cat "${PHASE_D_SHARED}/"*.json 2>/dev/null || echo '없음'
+\`\`\`
+
+**작업 완료 후** — 처리한 keyword_id 목록을 공유 디렉토리에 저장:
+\`\`\`bash
+echo '{\"agent\": \"D?\", \"processed_ids\": [1, 2, 3]}' > "${PHASE_D_SHARED}/d?_processed.json"
+\`\`\`
+(? 자리에 자신의 에이전트 번호 입력)"
+
+# ── D1: zero_fixer ────────────────────────────────────────────
+cat > "${FLAG_DIR}/prompt_D1_zero_fixer.txt" << 'D1HEADER'
+# SKQ Phase D1 — zero_fixer Agent
 
 당신은 검색 결과 0건 문제를 해결하는 SQL 생성 에이전트입니다.
+D1HEADER
+cat >> "${FLAG_DIR}/prompt_D1_zero_fixer.txt" << D1EOF
 
-${WAVE_D_COMMON}
+${PHASE_D_COMMON_HEADER}
 
 ## 담당 범위
 \`approved_proposals\` 중 \`diagnosis_code\`가 \`ZERO_RESULT\`인 항목만 처리.
 해당 항목이 없으면 빈 SQL 파일을 생성하고 완료 신호를 남깁니다.
 
 ## SQL 패턴
-
-### SIMILAR 동의어 추가 (ZERO_RESULT 기본 처방)
 \`\`\`sql
 -- [키워드] ZERO_RESULT → INSERT_SIMILAR_SYNONYM
 -- 검증: SELECT * FROM search_keywords WHERE keyword = '대상키워드';
@@ -643,41 +693,35 @@ WHERE s.keyword = '{source}' AND t.keyword = '{target}'
 
 ## 출력
 - \`${FLAG_DIR}/d1_zero_fixer.sql\`
-- \`${FLAG_DIR}/d1_zero_fixer_done\` (완료 신호)
+- 완료 후: \`touch "${FLAG_DIR}/d1_zero_fixer_done"\`
 
 SQL 파일 헤더:
 \`\`\`sql
 -- ============================================
--- SKQ Wave D1: zero_fixer
+-- SKQ Phase D1: zero_fixer
 -- 실행 ID: ${RUN_ID}
 -- ============================================
 BEGIN;
 ...
 COMMIT;
 \`\`\`
+D1EOF
 
-완료 후:
-\`\`\`bash
-touch "${FLAG_DIR}/d1_zero_fixer_done"
-\`\`\`
-ZEROFIXEOF
-)
-
-# ── D2: type_fixer — ETC_TYPE (UPDATE_KEYWORD_TYPE) ──────────
-TYPE_FIXER_PROMPT=$(cat << TYPEFIXEOF
-# SKQ Wave D2 — type_fixer Agent
+# ── D2: type_fixer ────────────────────────────────────────────
+cat > "${FLAG_DIR}/prompt_D2_type_fixer.txt" << 'D2HEADER'
+# SKQ Phase D2 — type_fixer Agent
 
 당신은 keyword_type=ETC 분류 오류를 수정하는 SQL 생성 에이전트입니다.
+D2HEADER
+cat >> "${FLAG_DIR}/prompt_D2_type_fixer.txt" << D2EOF
 
-${WAVE_D_COMMON}
+${PHASE_D_COMMON_HEADER}
 
 ## 담당 범위
 \`approved_proposals\` 중 \`diagnosis_code\`가 \`ETC_TYPE\`인 항목만 처리.
 해당 항목이 없으면 빈 SQL 파일을 생성하고 완료 신호를 남깁니다.
 
 ## SQL 패턴
-
-### keyword_type UPDATE
 \`\`\`sql
 -- [키워드] ETC_TYPE → UPDATE_KEYWORD_TYPE
 -- 검증: SELECT id, keyword, keyword_type FROM search_keywords WHERE id = {id};
@@ -694,30 +738,35 @@ WHERE id = {id}
 
 ## 출력
 - \`${FLAG_DIR}/d2_type_fixer.sql\`
-- \`${FLAG_DIR}/d2_type_fixer_done\` (완료 신호)
+- 완료 후: \`touch "${FLAG_DIR}/d2_type_fixer_done"\`
 
-완료 후:
-\`\`\`bash
-touch "${FLAG_DIR}/d2_type_fixer_done"
+SQL 파일 헤더:
+\`\`\`sql
+-- ============================================
+-- SKQ Phase D2: type_fixer
+-- 실행 ID: ${RUN_ID}
+-- ============================================
+BEGIN;
+...
+COMMIT;
 \`\`\`
-TYPEFIXEOF
-)
+D2EOF
 
-# ── D3: synonym_fixer — NO_SYNONYM (INSERT_SAME_SYNONYM) ─────
-SYNONYM_FIXER_PROMPT=$(cat << SYNFIXEOF
-# SKQ Wave D3 — synonym_fixer Agent
+# ── D3: synonym_fixer ─────────────────────────────────────────
+cat > "${FLAG_DIR}/prompt_D3_synonym_fixer.txt" << 'D3HEADER'
+# SKQ Phase D3 — synonym_fixer Agent
 
 당신은 동의어·유사어 관계 부재를 해결하는 SQL 생성 에이전트입니다.
+D3HEADER
+cat >> "${FLAG_DIR}/prompt_D3_synonym_fixer.txt" << D3EOF
 
-${WAVE_D_COMMON}
+${PHASE_D_COMMON_HEADER}
 
 ## 담당 범위
 \`approved_proposals\` 중 \`diagnosis_code\`가 \`NO_SYNONYM\`인 항목만 처리.
 해당 항목이 없으면 빈 SQL 파일을 생성하고 완료 신호를 남깁니다.
 
 ## SQL 패턴
-
-### SAME 또는 SIMILAR 동의어 추가 (verdict의 relation_type 기준)
 \`\`\`sql
 -- [키워드] NO_SYNONYM → {relation_type} 동의어 추가
 -- verdict_note: {debate에서 결정된 이유}
@@ -737,22 +786,81 @@ target 키워드가 search_keywords에 없으면 먼저 INSERT.
 
 ## 출력
 - \`${FLAG_DIR}/d3_synonym_fixer.sql\`
-- \`${FLAG_DIR}/d3_synonym_fixer_done\` (완료 신호)
+- 완료 후: \`touch "${FLAG_DIR}/d3_synonym_fixer_done"\`
 
-완료 후:
-\`\`\`bash
-touch "${FLAG_DIR}/d3_synonym_fixer_done"
+SQL 파일 헤더:
+\`\`\`sql
+-- ============================================
+-- SKQ Phase D3: synonym_fixer
+-- 실행 ID: ${RUN_ID}
+-- ============================================
+BEGIN;
+...
+COMMIT;
 \`\`\`
-SYNFIXEOF
-)
+D3EOF
 
-# ── D5: priority_fixer — WRONG_PRIORITY (UPDATE priority) ───
-PRIORITY_FIXER_PROMPT=$(cat << PRIFIXEOF
-# SKQ Wave D5 — priority_fixer Agent
+# ── D4: anchor_fixer ──────────────────────────────────────────
+cat > "${FLAG_DIR}/prompt_D4_anchor_fixer.txt" << 'D4HEADER'
+# SKQ Phase D4 — anchor_fixer Agent
+
+당신은 브랜드·카테고리 발골사전 미연결 문제를 해결하는 SQL 생성 에이전트입니다.
+D4HEADER
+cat >> "${FLAG_DIR}/prompt_D4_anchor_fixer.txt" << D4EOF
+
+${PHASE_D_COMMON_HEADER}
+
+## 담당 범위
+\`approved_proposals\` 중 \`diagnosis_code\`가 \`POSSIBLE_FALLBACK\`인 항목만 처리.
+해당 항목이 없으면 빈 SQL 파일을 생성하고 완료 신호를 남깁니다.
+
+## SQL 패턴
+
+### BRAND 발골사전 연결
+\`\`\`sql
+-- [키워드] POSSIBLE_FALLBACK → UPDATE_BRAND_ID (brand_id={proposed_brand_id})
+-- verdict_note: {debate에서 확인된 근거}
+-- 검증: SELECT id, name FROM brands WHERE id = {proposed_brand_id};
+INSERT INTO search_brand_keywords (search_keyword_id, brand_id)
+VALUES ({keyword_id}, {proposed_brand_id})
+ON CONFLICT (search_keyword_id) DO UPDATE
+  SET brand_id = EXCLUDED.brand_id, updated_at = NOW();
+\`\`\`
+
+### CATEGORY 발골사전 연결
+\`\`\`sql
+-- [키워드] POSSIBLE_FALLBACK → UPDATE_CATEGORY_MAPPING
+-- 검증: SELECT id, value FROM product_midtypes WHERE id = ANY(ARRAY[{ids}]);
+UPDATE search_category_keywords
+SET product_midtype_ids = ARRAY[{ids}], updated_at = NOW()
+WHERE search_keyword_id = {keyword_id};
+\`\`\`
+
+## 출력
+- \`${FLAG_DIR}/d4_anchor_fixer.sql\`
+- 완료 후: \`touch "${FLAG_DIR}/d4_anchor_fixer_done"\`
+
+SQL 파일 헤더:
+\`\`\`sql
+-- ============================================
+-- SKQ Phase D4: anchor_fixer
+-- 실행 ID: ${RUN_ID}
+-- ============================================
+BEGIN;
+...
+COMMIT;
+\`\`\`
+D4EOF
+
+# ── D5: priority_fixer ────────────────────────────────────────
+cat > "${FLAG_DIR}/prompt_D5_priority_fixer.txt" << 'D5HEADER'
+# SKQ Phase D5 — priority_fixer Agent
 
 당신은 키워드 우선순위(priority) 역전 문제를 해결하는 SQL 생성 에이전트입니다.
+D5HEADER
+cat >> "${FLAG_DIR}/prompt_D5_priority_fixer.txt" << D5EOF
 
-${WAVE_D_COMMON}
+${PHASE_D_COMMON_HEADER}
 
 ## 담당 범위
 \`approved_proposals\` 중 \`diagnosis_code\`가 \`WRONG_PRIORITY\`인 항목만 처리.
@@ -765,7 +873,7 @@ ${WAVE_D_COMMON}
   2. 토큰 커버 수 DESC (복합어 우선)
   3. TYPE_PRIORITY: CATEGORY(0) > BRAND(1) > COLOR(2)
 
-즉, priority가 같으면 더 많은 토큰을 커버하는 키워드가 이기지만,
+priority가 같으면 더 많은 토큰을 커버하는 키워드가 이기지만,
 priority가 다르면 무조건 낮은 숫자가 먼저 매칭됩니다.
 
 ## 케이스별 SQL 패턴
@@ -790,10 +898,7 @@ WHERE id = {id}
 -- [키워드A] WRONG_PRIORITY → UPDATE_PRIORITY (충돌 해소)
 -- 이유: '{keyword_a}'(priority={pa})가 '{keyword_b}'(priority={pb})보다 우선 매칭돼 토큰 충돌
 -- 해결: '{keyword_a}'의 priority를 '{keyword_b}'보다 높게(숫자 크게) 설정
--- verdict_note: {debate 결정 내용}
--- 검증:
---   SELECT id, keyword, priority FROM search_keywords
---   WHERE id IN ({id_a}, {id_b});
+-- 검증: SELECT id, keyword, priority FROM search_keywords WHERE id IN ({id_a}, {id_b});
 UPDATE search_keywords
 SET priority = {proposed_priority},
     updated_at = NOW()
@@ -804,146 +909,99 @@ WHERE id = {id}
 ## 주의사항
 - priority를 낮추는(숫자 작게) 경우: 다른 키워드와의 새로운 충돌 발생 여부를 debate_plan의 verdict_note에서 확인
 - priority를 올리는(숫자 크게) 경우: 해당 키워드가 더 늦게 매칭되므로 단독 검색 시 영향 없음 (토큰 충돌이 있을 때만 의미)
-- 한 번에 여러 키워드 priority를 변경하는 경우 순서 무관 (독립적 UPDATE)
 
 ## 출력
 - \`${FLAG_DIR}/d5_priority_fixer.sql\`
-- \`${FLAG_DIR}/d5_priority_fixer_done\` (완료 신호)
+- 완료 후: \`touch "${FLAG_DIR}/d5_priority_fixer_done"\`
 
 SQL 파일 헤더:
 \`\`\`sql
 -- ============================================
--- SKQ Wave D5: priority_fixer
+-- SKQ Phase D5: priority_fixer
 -- 실행 ID: ${RUN_ID}
 -- ============================================
 BEGIN;
 ...
 COMMIT;
 \`\`\`
+D5EOF
 
-완료 후:
-\`\`\`bash
-touch "${FLAG_DIR}/d5_priority_fixer_done"
-\`\`\`
-PRIFIXEOF
-)
+# Phase D 에이전트 스크립트 생성 (쓰기 권한 부여 — SQL 파일 생성 필요)
+write_agent_script "${FLAG_DIR}/run_D1_zero_fixer.sh"     "${FLAG_DIR}/prompt_D1_zero_fixer.txt" \
+  "Bash,Read,Write,Edit,Glob,Grep" "${FLAG_DIR}/d1_zero_fixer_done"
+write_agent_script "${FLAG_DIR}/run_D2_type_fixer.sh"     "${FLAG_DIR}/prompt_D2_type_fixer.txt" \
+  "Bash,Read,Write,Edit,Glob,Grep" "${FLAG_DIR}/d2_type_fixer_done"
+write_agent_script "${FLAG_DIR}/run_D3_synonym_fixer.sh"  "${FLAG_DIR}/prompt_D3_synonym_fixer.txt" \
+  "Bash,Read,Write,Edit,Glob,Grep" "${FLAG_DIR}/d3_synonym_fixer_done"
+write_agent_script "${FLAG_DIR}/run_D4_anchor_fixer.sh"   "${FLAG_DIR}/prompt_D4_anchor_fixer.txt" \
+  "Bash,Read,Write,Edit,Glob,Grep" "${FLAG_DIR}/d4_anchor_fixer_done"
+write_agent_script "${FLAG_DIR}/run_D5_priority_fixer.sh" "${FLAG_DIR}/prompt_D5_priority_fixer.txt" \
+  "Bash,Read,Write,Edit,Glob,Grep" "${FLAG_DIR}/d5_priority_fixer_done"
 
-# ── D4: anchor_fixer — POSSIBLE_FALLBACK (UPDATE 발골사전) ───
-ANCHOR_FIXER_PROMPT=$(cat << ANCFIXEOF
-# SKQ Wave D4 — anchor_fixer Agent
+echo "  ▶ 5개 SQL 생성 에이전트 병렬 실행..."
 
-당신은 브랜드·카테고리 발골사전 미연결 문제를 해결하는 SQL 생성 에이전트입니다.
+# D1 첫 번째 (가로 분할), D2~D5 세로 분할
+launch_agent "D1_zero_fixer"     "1️⃣"  "${FLAG_DIR}/run_D1_zero_fixer.sh"    "1"
+launch_agent "D2_type_fixer"     "2️⃣"  "${FLAG_DIR}/run_D2_type_fixer.sh"    "0"
+launch_agent "D3_synonym_fixer"  "3️⃣"  "${FLAG_DIR}/run_D3_synonym_fixer.sh" "0"
+launch_agent "D4_anchor_fixer"   "4️⃣"  "${FLAG_DIR}/run_D4_anchor_fixer.sh"  "0"
+launch_agent "D5_priority_fixer" "5️⃣"  "${FLAG_DIR}/run_D5_priority_fixer.sh" "0"
 
-${WAVE_D_COMMON}
+wait_phase "Phase D — Propose (5 에이전트)" \
+  "d1_zero_fixer_done" \
+  "d2_type_fixer_done" \
+  "d3_synonym_fixer_done" \
+  "d4_anchor_fixer_done" \
+  "d5_priority_fixer_done"
 
-## 담당 범위
-\`approved_proposals\` 중 \`diagnosis_code\`가 \`POSSIBLE_FALLBACK\`인 항목만 처리.
-해당 항목이 없으면 빈 SQL 파일을 생성하고 완료 신호를 남깁니다.
+cleanup_phase
 
-## SQL 패턴
-
-### BRAND 발골사전 연결 (proposed_brand_id 기준)
-\`\`\`sql
--- [키워드] POSSIBLE_FALLBACK → UPDATE_BRAND_ID (brand_id={proposed_brand_id})
--- verdict_note: {debate에서 확인된 근거}
--- 검증: SELECT id, name FROM brands WHERE id = {proposed_brand_id};
-INSERT INTO search_brand_keywords (search_keyword_id, brand_id)
-VALUES ({keyword_id}, {proposed_brand_id})
-ON CONFLICT (search_keyword_id) DO UPDATE
-  SET brand_id = EXCLUDED.brand_id, updated_at = NOW();
-\`\`\`
-
-### CATEGORY 발골사전 연결 (proposed_midtype_ids 기준)
-\`\`\`sql
--- [키워드] POSSIBLE_FALLBACK → UPDATE_CATEGORY_MAPPING
--- 검증: SELECT id, value FROM product_midtypes WHERE id = ANY(ARRAY[{ids}]);
-UPDATE search_category_keywords
-SET product_midtype_ids = ARRAY[{ids}], updated_at = NOW()
-WHERE search_keyword_id = {keyword_id};
-\`\`\`
-
-## 출력
-- \`${FLAG_DIR}/d4_anchor_fixer.sql\`
-- \`${FLAG_DIR}/d4_anchor_fixer_done\` (완료 신호)
-
-완료 후:
-\`\`\`bash
-touch "${FLAG_DIR}/d4_anchor_fixer_done"
-\`\`\`
-ANCFIXEOF
-)
-
-# Wave D 병렬 실행
-echo "     4개 SQL 생성 에이전트 병렬 실행..."
-
-claude --dangerously-skip-permissions -p "${ZERO_FIXER_PROMPT}" &
-D1_PID=$!
-claude --dangerously-skip-permissions -p "${TYPE_FIXER_PROMPT}" &
-D2_PID=$!
-claude --dangerously-skip-permissions -p "${SYNONYM_FIXER_PROMPT}" &
-D3_PID=$!
-claude --dangerously-skip-permissions -p "${ANCHOR_FIXER_PROMPT}" &
-D4_PID=$!
-claude --dangerously-skip-permissions -p "${PRIORITY_FIXER_PROMPT}" &
-D5_PID=$!
-
-echo "     D1 zero_fixer     PID: ${D1_PID}"
-echo "     D2 type_fixer     PID: ${D2_PID}"
-echo "     D3 synonym_fixer  PID: ${D3_PID}"
-echo "     D4 anchor_fixer   PID: ${D4_PID}"
-echo "     D5 priority_fixer PID: ${D5_PID}"
-
-wait "${D1_PID}" || true
-wait "${D2_PID}" || true
-wait "${D3_PID}" || true
-wait "${D4_PID}" || true
-wait "${D5_PID}" || true
-
+# D 완료 집계
 D_DONE=0
-for agent in d1_zero_fixer d2_type_fixer d3_synonym_fixer d4_anchor_fixer d5_priority_fixer; do
-  if [[ -f "${FLAG_DIR}/${agent}_done" ]]; then
-    echo "     ✅ ${agent} 완료"
+for flag in d1_zero_fixer_done d2_type_fixer_done d3_synonym_fixer_done d4_anchor_fixer_done d5_priority_fixer_done; do
+  if [[ -f "${FLAG_DIR}/${flag}" ]]; then
+    echo "  ✅ ${flag%.done} 완료"
     D_DONE=$((D_DONE + 1))
   else
-    echo "     ⚠️  ${agent} 미완료"
+    echo "  ⚠️  ${flag%.done} 미완료"
   fi
 done
 
-if [[ ${D_DONE} -eq 0 ]]; then
-  echo "     ❌ Wave D 전부 실패 — 종료합니다."
+if [[ "${D_DONE}" -eq 0 ]]; then
+  echo "  ❌ Phase D 전부 실패 — 종료합니다."
   exit 1
 fi
-
-echo "     ✅ Wave D 완료 (${D_DONE}/4 에이전트)"
-touch "${FLAG_DIR}/wave_D_done"
+echo "  ✅ Phase D 완료 (${D_DONE}/5 에이전트)"
+touch "${FLAG_DIR}/phase_D_done"
 
 # ═══════════════════════════════════════════════════════════════
-# Wave E — Ship-Ready: 최종 SQL 패키징 + 매니페스트 생성
+# Phase E — Ship-Ready
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  Wave E — Ship-Ready: 최종 SQL 패키징                    │"
+echo "│  Phase E — Ship-Ready: 최종 SQL 패키징                    │"
 echo "└─────────────────────────────────────────────────────────┘"
 
-# D에서 생성된 SQL 파일 취합
-ALL_SQL=""
+# D에서 생성된 SQL 파일 목록 취합 (경로만 — 에이전트가 Read로 직접 읽음)
+D_SQL_FILES=""
 for sql_file in "${FLAG_DIR}"/d*.sql; do
-  if [[ -f "${sql_file}" ]]; then
-    ALL_SQL+="-- ===== $(basename "${sql_file}") =====\n"
-    ALL_SQL+="$(cat "${sql_file}")\n\n"
-  fi
+  [[ -f "${sql_file}" ]] && D_SQL_FILES+="${sql_file}\n" || true
 done
 
-WAVE_E_PROMPT=$(cat << WAVEEEOF
-# SKQ Wave E — Ship-Ready Agent
+cat > "${FLAG_DIR}/prompt_phase_E.txt" << 'PHASEEEOF_MARKER'
+# SKQ Phase E — Ship-Ready Agent
 
 당신은 최종 배포 패키징 에이전트입니다.
-Wave D에서 생성된 SQL을 하나로 정리하고, ship 명령어가 실행할 파일을 만듭니다.
+Phase D에서 생성된 SQL을 하나로 정리하고, ship 명령어가 실행할 파일을 만듭니다.
+PHASEEEOF_MARKER
 
-## Wave D 생성 SQL
-$(printf '%b' "${ALL_SQL}")
+cat >> "${FLAG_DIR}/prompt_phase_E.txt" << PHASEEEOF
+## Phase D SQL 파일 목록 (Read 툴로 각 파일을 읽으세요)
+\`\`\`
+$(printf '%b' "${D_SQL_FILES}")
+\`\`\`
 
-## Wave C 토론 최종 플랜 (참조용)
+## Phase C 최종 플랜 (참조용)
 \`\`\`json
 ${DEBATE_PLAN}
 \`\`\`
@@ -956,24 +1014,26 @@ ${DEBATE_PLAN}
 ### 1. \`${OUTPUT_DIR}/ship.sql\` 생성
 - 헤더 주석 (실행 ID, 생성일, 변경 요약 카운트)
 - 전체 하나의 BEGIN/COMMIT 트랜잭션
-- d*.sql의 SQL을 fix_type별로 정렬하여 통합 (INSERT_KEYWORD → UPDATE_KEYWORD_TYPE → UPDATE_PRIORITY → INSERT_SYNONYM → UPDATE_ANCHOR 순)
-  ※ UPDATE_PRIORITY는 토큰 매칭 기준을 바꾸므로 다른 변경보다 먼저 적용해야 일관성 유지
+- fix_type별 정렬 순서 (아래 순으로):
+  1. UPDATE_PRIORITY  — 토큰 매칭 기준 먼저 확정
+  2. UPDATE_KEYWORD_TYPE  — 타입 기준 확정
+  3. INSERT_SAME_SYNONYM / INSERT_SIMILAR_SYNONYM  — 동의어 확장
+  4. UPDATE_BRAND_ID / UPDATE_CATEGORY_MAPPING  — 발골사전 연결
 - REJECT된 항목은 포함하지 않음
 
 ### 2. \`${OUTPUT_DIR}/ship-manifest.md\` 생성
-
 \`\`\`markdown
 # SKQ Ship Manifest
 
 - **실행 ID**: ${RUN_ID}
-- **생성일**: $(date)
+- **생성일**: $(date '+%Y-%m-%d %H:%M:%S')
 - **범위**: ${SCOPE}
 
 ## 변경 요약
 
 | # | 키워드 | fix_type | 변경 내용 | Debate 판정 |
 |---|--------|---------|---------|:----------:|
-| 1 | 린넨셔츠 | INSERT_SIMILAR_SYNONYM | 셔츠와 SIMILAR 관계 추가 | APPROVE |
+...
 
 ## 통계
 - Debate 승인: N건 / 거절: N건
@@ -983,55 +1043,54 @@ ${DEBATE_PLAN}
 ## 롤백 SQL
 \`\`\`sql
 -- 각 변경사항 롤백 (실행 역순)
-DELETE FROM search_keyword_relations WHERE ...;
+...
 \`\`\`
 \`\`\`
 
-완료 후:
+완료 후 반드시 실행:
 \`\`\`bash
-touch "${FLAG_DIR}/wave_E_done"
+touch "${FLAG_DIR}/phase_E_done"
 \`\`\`
-WAVEEEOF
-)
+PHASEEEOF
 
-echo "${WAVE_E_PROMPT}" > "${FLAG_DIR}/wave_e_prompt.md"
-claude --dangerously-skip-permissions -p "${WAVE_E_PROMPT}" &
-WAVE_E_PID=$!
+write_agent_script "${FLAG_DIR}/run_phase_E.sh" "${FLAG_DIR}/prompt_phase_E.txt" \
+  "Bash,Read,Write,Edit,Glob,Grep" "${FLAG_DIR}/phase_E_done"
+launch_agent "phase_E_ship_ready" "📦" "${FLAG_DIR}/run_phase_E.sh" "1"
 
-echo "     Wave E 에이전트 시작 (PID: ${WAVE_E_PID})"
-wait "${WAVE_E_PID}" || true
+wait_phase "Phase E — Ship-Ready" "phase_E_done"
+cleanup_phase
 
-if [[ ! -f "${FLAG_DIR}/wave_E_done" ]]; then
-  echo "     ⚠️  Wave E 미완료"
+if [[ ! -f "${FLAG_DIR}/phase_E_done" ]]; then
+  echo "  ⚠️  Phase E 미완료 — 계속 진행합니다."
 else
-  echo "     ✅ Wave E 완료"
+  echo "  ✅ Phase E 완료"
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# Wave F — Validate: 예상 개선도 추정 + 최종 리포트
+# Phase F — Validate
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  Wave F — Validate: 예상 개선도 추정 + 리포트            │"
+echo "│  Phase F — Validate: 예상 개선도 추정 + 리포트            │"
 echo "└─────────────────────────────────────────────────────────┘"
 
-SHIP_SQL="$(cat "${OUTPUT_DIR}/ship.sql" 2>/dev/null || echo '-- ship.sql 없음')"
-MANIFEST="$(cat "${OUTPUT_DIR}/ship-manifest.md" 2>/dev/null || echo '')"
-
-WAVE_F_PROMPT=$(cat << WAVEFEOF
-# SKQ Wave F — Validate Agent
+cat > "${FLAG_DIR}/prompt_phase_F.txt" << 'PHASEFEOF_MARKER'
+# SKQ Phase F — Validate Agent
 
 당신은 검색 품질 개선 효과 추정 에이전트입니다.
 ship.sql이 적용되었을 때 기대할 수 있는 개선 효과를 추정하고 최종 리포트를 작성합니다.
+PHASEFEOF_MARKER
 
-## 변경 내용
-${MANIFEST}
+cat >> "${FLAG_DIR}/prompt_phase_F.txt" << PHASEFEOF
+## 참고 파일 (Read 툴로 읽으세요)
+- ship manifest: ${OUTPUT_DIR}/ship-manifest.md
+- ship SQL: ${OUTPUT_DIR}/ship.sql
+- 검색 파이프라인: ${PIPELINE_DOC}
+- DB 스키마: ${SCHEMA_DOC}
 
-## 검색 파이프라인 & DB 스키마
-${DOCS_CONTEXT}
-
-## DB 접근
-${DB_CONTEXT}
+## DB 접근 (현재 상태 확인용 SELECT)
+환경변수(PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT)는 이미 export 되어 있음.
+⚠️ SELECT만 가능 (read-only).
 
 ## 작업
 
@@ -1040,28 +1099,28 @@ ${DB_CONTEXT}
    - 연결될 target 키워드의 result_product_count 확인
 
 2. **fix_type별 예상 개선 논리**
-   - ZERO_RESULT + SIMILAR 동의어: Tier2 폴백으로 target 키워드의 상품이 노출됨 → 예상 결과 ≈ target의 result_product_count × 0.6
+   - ZERO_RESULT + SIMILAR 동의어: Tier2 폴백으로 target 키워드 상품 노출 → 예상 결과 ≈ target의 result_product_count × 0.6
    - ETC_TYPE → 올바른 타입: 발골 성공 시 해당 카테고리/브랜드 전체 상품 노출
    - NO_SYNONYM + SAME 동의어: Tier1 확장 → target 키워드 상품이 동일 우선순위로 합산됨
-   - POSSIBLE_FALLBACK + 발골 연결: 텍스트 검색 → 정밀 필터 전환 → 정확도 향상 (결과 수는 감소할 수 있음)
+   - POSSIBLE_FALLBACK + 발골 연결: 텍스트 검색 → 정밀 필터 전환 → 정확도 향상 (결과 수는 감소 가능)
    - WRONG_PRIORITY + priority 조정:
-     - rank 기반 중요도 역전 해소: 직접적인 결과 수 변화는 없으나, 해당 키워드가 복합 쿼리에서 올바르게 우선 매칭됨
-     - 토큰 충돌 해소: 포괄 키워드(예: "자라")가 구체 쿼리(예: "자라체크")에서 잘못 매칭되던 케이스가 제거됨 → 해당 구체 키워드의 정밀 필터 시나리오로 정상 전환
+     - rank 기반 중요도 역전 해소: 직접적인 결과 수 변화 없으나 복합 쿼리에서 올바르게 우선 매칭
+     - 토큰 충돌 해소: 포괄 키워드가 구체 쿼리에서 잘못 매칭되던 케이스 제거 → 정밀 필터 정상 전환
 
 3. **최종 리포트 생성**
 
-### \`${OUTPUT_DIR}/wave-f-validate.md\`
+### \`${OUTPUT_DIR}/phase-f-validate.md\`
 \`\`\`markdown
 # SKQ 개선 효과 추정 리포트
 
 - **실행 ID**: ${RUN_ID}
-- **분석일**: $(date)
+- **분석일**: $(date '+%Y-%m-%d %H:%M:%S')
 
 ## 키워드별 예상 개선
 
 | 키워드 | fix_type | 현재 결과수 | 예상 결과수 | 변화 | 신뢰도 |
 |--------|---------|-----------|-----------|------|:------:|
-| 린넨셔츠 | SIMILAR 동의어 | 0 | ~498 | ▲498 | 중 |
+...
 
 ## 적용 권장
 - **즉시 적용** (신뢰도 높음): N건
@@ -1073,25 +1132,19 @@ ${DB_CONTEXT}
 - SIMILAR 동의어는 Tier2 폴백이므로 Tier1 결과가 있으면 노출 안 됨
 \`\`\`
 
-완료 후:
+완료 후 반드시 실행:
 \`\`\`bash
-touch "${FLAG_DIR}/wave_F_done"
+touch "${FLAG_DIR}/phase_F_done"
 \`\`\`
-WAVEFEOF
-)
+PHASEFEOF
 
-echo "${WAVE_F_PROMPT}" > "${FLAG_DIR}/wave_f_prompt.md"
-claude --dangerously-skip-permissions -p "${WAVE_F_PROMPT}" &
-WAVE_F_PID=$!
-
-echo "     Wave F 에이전트 시작 (PID: ${WAVE_F_PID})"
-wait "${WAVE_F_PID}" || true
-
-if [[ ! -f "${FLAG_DIR}/wave_F_done" ]]; then
-  echo "     ⚠️  Wave F 미완료"
-else
-  echo "     ✅ Wave F 완료"
-fi
+write_agent_script "${FLAG_DIR}/run_phase_F.sh" "${FLAG_DIR}/prompt_phase_F.txt" \
+  "Bash,Read,Glob,Grep" "${FLAG_DIR}/phase_F_done"
+launch_agent "phase_F_validate" "📊" "${FLAG_DIR}/run_phase_F.sh" "1"
+# [Async Hook] Phase F는 블로킹 없이 백그라운드에서 실행
+# ship.sql이 준비된 즉시 사용자에게 결과를 전달하고,
+# 예상 개선 리포트는 비동기로 ${OUTPUT_DIR}/phase-f-validate.md에 생성됨
+echo "  ▶ Phase F 백그라운드 실행 중 (완료 시 phase-f-validate.md 자동 생성)"
 
 # ═══════════════════════════════════════════════════════════════
 # 최종 완료
@@ -1104,8 +1157,8 @@ echo ""
 echo "  📁 결과물:"
 echo "    ${OUTPUT_DIR}/ship.sql           ← 적용할 SQL"
 echo "    ${OUTPUT_DIR}/ship-manifest.md   ← 변경 요약"
-echo "    ${OUTPUT_DIR}/wave-c-debate.md   ← Debate 토론 기록"
-echo "    ${OUTPUT_DIR}/wave-f-validate.md ← 예상 개선 효과"
+echo "    ${OUTPUT_DIR}/phase-c-debate.md   ← Debate 토론 기록"
+echo "    ${OUTPUT_DIR}/phase-f-validate.md ← 예상 개선 효과 (백그라운드 생성 중)"
 echo ""
 echo "  🚀 적용:"
 echo "    ship --dry-run        # SQL 미리보기"
